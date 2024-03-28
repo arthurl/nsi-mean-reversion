@@ -1,0 +1,66 @@
+[tool.poetry]
+name = "nsi_mean_reversion"  # has to be the same as first level folder, with - changed to _
+version = "0.1.0"
+description = ""
+authors = ["Arthur Lee"]
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.12"
+python-dateutil = "*"
+sortedcontainers = "*"
+numpy = "*"
+pandas = "*"
+pandas-datareader = "*"
+matplotlib = "*"
+seaborn = "*"
+scipy = "*"
+sympy = "*"
+scikit-learn = "*"
+yfinance = "*"
+rarfile = "*"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+pylint = "*"
+pyright = "*"
+types-requests = "*"
+types-python-dateutil = "*"
+types-seaborn = "*"
+types-networkx = "*"
+types-tensorflow = "*"
+types-openpyxl = "*"
+pandas-stubs = "*"
+jupyter = "*"
+jupytext = "*"
+nbmerge = "*"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+arthurexec = "nsi_mean_reversion.lib:hello"
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "--ignore=result/ --ignore=yet-another-folder/"
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+  "F", # Pyflakes
+  "E", "W", # pycodestyle
+  "C", # McCabe complexity
+  "I", # isort
+  "UP", # pyupgrade
+  "ASYNC", # flake8-async
+  "B", # flake8-bugbear
+  "A", # flake8-builtins
+  "C4", # flake8-comprehensions
+  "PT", # flake8-pytest-style
+  "RSE", # flake8-raise
+  "SIM", # flake8-simplify
+  "NPY", # numpy
+]
