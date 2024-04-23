@@ -220,18 +220,15 @@ def plotTimeseries(
     dataSets: Collection[
         pd.Series | pd.DataFrame
     ],  # first element uses the left y-axis, the others will use the right
-    intervals: Iterable[pd.DataFrame] = iter([]),
+    intervalSets: Iterable[pd.arrays.IntervalArray] = iter([]),
     bands: Iterable[pd.DataFrame] = iter([]),
     /,
     *,
-    start=datetime.datetime.min,
-    end=datetime.datetime.max,
+    plotInterval: pd.Interval | NoneType = None,
     figsize=None,
     title: str = "",
     ylabels: Iterable[str] = iter([]),
     plotKWArgs: dict | NoneType = None,
-    intervalStartTimeColSuffix="time start",
-    intervalEndTimeColSuffix="time end",
     intervalColours: Iterable[str] = iter([]),
     intervalKWArgs: dict | NoneType = None,
     bandUpperColSuffix="upper",
@@ -248,6 +245,11 @@ def plotTimeseries(
 
     if len(dataSets) == 0:
         return None
+    plotInterval = plotInterval or pd.Interval(
+        left=pd.Timestamp(datetime.datetime.min),
+        right=pd.Timestamp(datetime.datetime.max),
+        closed="left",
+    )
     ylabelIt = iter(ylabels)
     plotKWArgs = plotKWArgs or {}
     intervalColourIt = iter(intervalColours)
@@ -259,7 +261,7 @@ def plotTimeseries(
     data = next(dataSetIt := iter(dataSets))
     cCounter = len(data.columns) if isinstance(data, pd.DataFrame) else 1
     colours = [f"C{i}" for i in range(cCounter)]
-    data[(start <= data.index) & (data.index < end)].plot(
+    data[(plotInterval.left <= data.index) & (data.index < plotInterval.right)].plot(
         ax=ax, legend=False, color=colours, **plotKWArgs
     )
     ax.set_xlabel("Date")
@@ -285,9 +287,9 @@ def plotTimeseries(
         ]
         cCounter += len(colours)
         yAxisColour = colours[0] if len(dataSets) > 2 and len(colours) == 1 else None
-        data[(start <= data.index) & (data.index < end)].plot(
-            ax=axR, legend=False, color=colours, **plotKWArgs
-        )
+        data[
+            (plotInterval.left <= data.index) & (data.index < plotInterval.right)
+        ].plot(ax=axR, legend=False, color=colours, **plotKWArgs)
         if ylabel := next(ylabelIt, False):
             if yAxisColour is None:
                 axR.set_ylabel(ylabel)
@@ -297,25 +299,25 @@ def plotTimeseries(
             axR.tick_params(axis="y", colors=yAxisColour)
         axPrev = axR
 
-    for interval in intervals:
+    for intervals in intervalSets:
         colour = next(intervalColourIt, None)
         if colour is None:
             colour = f"C{cCounter}"
             cCounter += 1
-        startTimeColName = colFromSuffix(interval, intervalStartTimeColSuffix)
-        endTimeColName = colFromSuffix(interval, intervalEndTimeColSuffix)
-        for startTime, endTime in interval[
-            (interval[startTimeColName].between(start, end, inclusive="left"))
-            | (interval[endTimeColName].between(start, end, inclusive="left"))
-        ][[startTimeColName, endTimeColName]].itertuples(index=False):
-            ax.axvspan(startTime, endTime, color=colour, **intervalKWArgs)
+        for interval in intervals:
+            if interval.overlaps(plotInterval):
+                ax.axvspan(
+                    interval.left, interval.right, color=colour, **intervalKWArgs
+                )
 
     for band in bands:
         colour = next(bandColourIt, None)
         if colour is None:
             colour = f"C{cCounter}"
             cCounter += 1
-        band = band[(start <= band.index) & (band.index < end)]
+        band = band[
+            (plotInterval.left <= band.index) & (band.index < plotInterval.right)
+        ]
         lowerBand = band[colFromSuffix(band, bandLowerColSuffix)]
         upperBand = band[colFromSuffix(band, bandUpperColSuffix)]
         ax.fill_between(band.index, lowerBand, upperBand, color=colour, **bandKWArgs)
@@ -1186,19 +1188,29 @@ def findLargestIntervalsBefore0(
     intervals["time start"] = intervals.apply(getIdxExtrema, axis=1)
     # drop intervals without data
     intervals.dropna(inplace=True)
-    intervals = intervals[["time start", "time end", "direction"]].sort_values(
-        by="time start"
+    intervals["time interval"] = pd.arrays.IntervalArray.from_arrays(
+        intervals["time start"], intervals["time end"], closed="left"
+    )
+    intervals = intervals[["time interval", "direction"]].sort_values(
+        by="time interval"
     )
 
     if threshold > 0:
         srAbs = sr.abs()
         intervals = intervals.drop(
             intervals[
-                intervals.apply(
-                    lambda row: srAbs.loc[row["time start"]]
+                intervals["time interval"].array.left.map(srAbs)  # type: ignore
+                / intervals.apply(
+                    lambda row: 1
                     / srAbs[
-                        (row["time end"] - thresholdInterval / 2 <= srAbs.index)
-                        & (srAbs.index < row["time end"] + thresholdInterval / 2)
+                        (
+                            row["time interval"].right - thresholdInterval / 2
+                            <= srAbs.index
+                        )
+                        & (
+                            srAbs.index
+                            < row["time interval"].right + thresholdInterval / 2
+                        )
                     ].max(),
                     axis=1,
                 )
@@ -1224,17 +1236,13 @@ def findMACDOptimumReturnIntervals(
     optimumTrades = findLargestIntervalsBefore0(
         macd, maxInterval=maxInterval, threshold=thresholdMACD
     )
-    optimumTrades["duration"] = (
-        optimumTrades["time end"] - optimumTrades["time start"]
-    ) / pd.Timedelta(days=1)  # type: ignore
+    optimumTrades["duration"] = optimumTrades[
+        "time interval"
+    ].array.length / pd.Timedelta(days=1)  # type: ignore
     optimumTrades["return"] = (
-        optimumTrades.apply(
-            lambda row: price.loc[row["time end"]] / price.loc[row["time start"]],
-            axis=1,
-        )
-        ** optimumTrades["direction"]
-        - 1
-    )
+        optimumTrades["time interval"].array.right.map(price)  # type: ignore
+        / optimumTrades["time interval"].array.left.map(price)  # type: ignore
+    ) ** optimumTrades["direction"] - 1
     optimumTrades = optimumTrades.drop(
         optimumTrades[optimumTrades["return"] <= thresholdReturn].index
     ).reset_index(drop=True)
@@ -1251,22 +1259,23 @@ macdCen.name = latexEscape(macdCen.name.removeprefix(f"{sr.name} "))  # type: ig
 
 display(optimumTrades)
 
-start = datetime.datetime(2022, 1, 1)
-end = start + pd.Timedelta(days=365)
+start = pd.Timestamp(2022, 1, 1)
+plotInterval = pd.Interval(start, start + pd.Timedelta(days=365))
 fig = plotTimeseries(
     [df2, macdCen],
     [
-        optimumTrades[optimumTrades["direction"] > 0],
-        optimumTrades[optimumTrades["direction"] < 0],
-    ],
-    start=start,
-    end=end,
+        optimumTrades[optimumTrades["direction"] > 0]["time interval"],
+        optimumTrades[optimumTrades["direction"] < 0]["time interval"],
+    ],  # type: ignore
+    plotInterval=plotInterval,
     figsize=(8, 4.8),  # (14, 10.5)
     ylabels=map(latexEscape, ["Price / $", "MACD / $"]),
     intervalColours=["xkcd:green", "xkcd:pale red"],
 )
 fig.axes[1].axhline(y=0, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
-fig.savefig(BASEDIR / f"M6 - {ticker} {start.year} trades.pdf", bbox_inches="tight")  # type: ignore
+fig.savefig(  # type: ignore
+    BASEDIR / f"M6 - {ticker} {plotInterval.left.year} trades.pdf", bbox_inches="tight"
+)
 del sr, df2, macdCen, optimumTrades
 
 # %% [markdown]
