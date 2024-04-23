@@ -1278,6 +1278,97 @@ fig.savefig(  # type: ignore
 )
 del sr, df2, macdCen, optimumTrades
 
+# %%
+equityUniverse.drop(
+    equityUniverse[equityUniverse["start"].dt.date > datetime.date(2021, 1, 1)].index,
+    inplace=True,
+)
+display(equityUniverse)
+
+# %% tags=["active-py"]
+resampledData = fetchTickersResampledAtTimes(equityUniverse.index, ["10:00", "14:45"])
+resampledData.to_csv(BASEDIR / "data" / r"equity_universe_resampled_close.csv")
+
+# %%
+with open(BASEDIR / "data" / r"equity_universe_resampled_close.csv") as f:
+    resampledData = pd.read_csv(f, index_col="time", parse_dates=True)
+resampledData.columns = map(latexEscape, resampledData.columns)  # type: ignore
+display(resampledData)
+
+# %%
+display(resampledData[resampledData.isna().any(axis=1)])
+
+# %%
+sr = df["close"]
+sr.name = ticker
+srDaily = resampledData[ticker].at_time(datetime.time(10, 0))
+df2 = pd.DataFrame()
+for window in ["24h", "30D"]:
+    df2[latexEscape(f"{window} MA")] = sr.rolling(window=window, center=False).mean()
+macd = computeMACD(sr)
+macd.name = latexEscape(macd.name.removeprefix(f"{sr.name} "))  # type: ignore
+rsi = computeRSI(srDaily, minObservations=10)
+rsi.name = latexEscape(rsi.name.removeprefix(f"{sr.name} "))  # type: ignore
+bollinger = computeBollingerBands(srDaily)
+bollinger.columns = [col.removeprefix(f"{sr.name} ") for col in bollinger.columns]
+targetTrades, _ = findMACDOptimumReturnIntervals(sr)
+
+display(targetTrades)
+
+for yr in [2021, 2022, 2023]:
+    plotInterval = pd.Interval(
+        pd.Timestamp(yr, 1, 1), pd.Timestamp(yr + 1, 1, 1), closed="left"
+    )
+    fig = plotTimeseries(
+        [df2, macd, rsi],
+        [
+            targetTrades[targetTrades["direction"] > 0]["time interval"],
+            targetTrades[targetTrades["direction"] < 0]["time interval"],
+        ],  # type: ignore
+        [bollinger],
+        plotInterval=plotInterval,
+        figsize=(14, 10.5),  # (8, 4.8),
+        title=latexEscape(f"{ticker} {plotInterval.left.year}"),
+        ylabels=map(latexEscape, ["Price / $", "MACD / $", "RSI"]),
+        plotKWArgs={"alpha": 0.8},
+        intervalColours=["xkcd:green", "xkcd:pale red"],
+        bandColours=["C0"],
+    )
+    fig.axes[2].axhline(y=20, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
+    fig.axes[2].axhline(y=80, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
+    del yr, plotInterval
+
+X = rsi.to_frame().join([macd, bollinger, df2], how="left", sort=True).dropna()
+y = pd.Series(
+    data=X.index.map(
+        lambda t: any(t in interval for interval in targetTrades["time interval"])
+    ),
+    index=X.index,
+).astype(int)
+XTrain, XTest, yTrain, yTest = sklearn.model_selection.train_test_split(
+    X, y, test_size=0.2, shuffle=False
+)
+del sr, srDaily, df2, macd, rsi, bollinger, _, targetTrades, X, y
+
+# %%
+import sklearn.tree
+
+clf = sklearn.tree.DecisionTreeClassifier(
+    criterion="gini", max_depth=3, min_samples_leaf=25
+)
+clf.fit(XTrain, yTrain)
+
+fig, ax = plt.subplots(figsize=(14, 10.5))
+_ = sklearn.tree.plot_tree(
+    clf, feature_names=XTrain.columns, class_names=["out", "in"], filled=True, ax=ax
+)
+
+# %%
+import sklearn.metrics
+
+yProbTest = clf.predict_proba(XTest)[:, 1]  # type:ignore
+display(sklearn.metrics.roc_auc_score(yTest, yProbTest))
+
 # %% [markdown]
 # Next example, “SUNPHARMA”.
 
