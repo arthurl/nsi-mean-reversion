@@ -86,6 +86,9 @@ if USELATEX:
         """
         return regex.sub(lambda match: LATEXESCAPE[match.group()], text)
 
+    def latexTextSC(text: str) -> str:
+        return r"\textsc{" + text + r"}"
+
     plt.rcParams.update(
         {"text.usetex": True, "font.family": "serif", "font.sans-serif": "XCharter"}
     )
@@ -93,6 +96,9 @@ else:
 
     def latexEscape(text: str) -> str:
         return text
+
+    def latexTextSC(text: str) -> str:
+        return text.upper()
 
 # %% [markdown]
 # Helper function for multiprocessing.
@@ -871,7 +877,7 @@ fig, ax = plt.subplots()
 ax.plot(np.arange(len(volumes)), volumes)
 ax.set_yscale("log")
 ax.set_xlabel("Rank")
-ax.set_ylabel("Average daily volume in Dec 2023 / INR")
+ax.set_ylabel("Average daily volume in Dec 2023 / " + latexTextSC("inr"))
 fig.savefig(BASEDIR / r"M4 - 202312 equity daily volumes.pdf", bbox_inches="tight")
 
 # %% [markdown]
@@ -1253,14 +1259,19 @@ def findMACDOptimumReturnIntervals(
 sr = df["close"]
 df2 = pd.DataFrame()
 for window in ["24h", "30D"]:
-    df2[latexEscape(f"{window} MA")] = sr.rolling(window=window, center=True).mean()
+    df2[f"{latexEscape(window)} {latexTextSC('ma')}"] = sr.rolling(
+        window=window, center=True
+    ).mean()
 optimumTrades, macdCen = findMACDOptimumReturnIntervals(sr)
-macdCen.name = latexEscape(macdCen.name.removeprefix(f"{sr.name} "))  # type: ignore
 
 display(optimumTrades)
 
 start = pd.Timestamp(2022, 1, 1)
 plotInterval = pd.Interval(start, start + pd.Timedelta(days=365))
+macdCen.name = latexTextSC("macd") + latexEscape(
+    macdCen.name.removeprefix(f"{sr.name} MACD")  # type: ignore
+)
+sr.name = latexTextSC(latexEscape(ticker.lower()))
 fig = plotTimeseries(
     [df2, macdCen],
     [
@@ -1269,7 +1280,7 @@ fig = plotTimeseries(
     ],  # type: ignore
     plotInterval=plotInterval,
     figsize=(8, 4.8),  # (14, 10.5)
-    ylabels=map(latexEscape, ["Price / $", "MACD / $"]),
+    ylabels=[latexEscape("Price / $"), latexTextSC("macd") + latexEscape(" / $")],
     intervalColours=["xkcd:green", "xkcd:pale red"],
 )
 fig.axes[1].axhline(y=0, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
@@ -1304,17 +1315,25 @@ sr.name = ticker
 srDaily = resampledData[ticker].at_time(datetime.time(10, 0))
 df2 = pd.DataFrame()
 for window in ["24h", "30D"]:
-    df2[latexEscape(f"{window} MA")] = sr.rolling(window=window, center=False).mean()
+    df2[f"{latexEscape(window)} {latexTextSC('ma')}"] = sr.rolling(
+        window=window, center=True
+    ).mean()
 macd = computeMACD(sr)
-macd.name = latexEscape(macd.name.removeprefix(f"{sr.name} "))  # type: ignore
 rsi = computeRSI(srDaily, minObservations=10)
-rsi.name = latexEscape(rsi.name.removeprefix(f"{sr.name} "))  # type: ignore
 bollinger = computeBollingerBands(srDaily)
-bollinger.columns = [col.removeprefix(f"{sr.name} ") for col in bollinger.columns]
 targetTrades, _ = findMACDOptimumReturnIntervals(sr)
 
 display(targetTrades)
 
+macd.name = latexTextSC("macd") + latexEscape(
+    macd.name.removeprefix(f"{sr.name} MACD")  # type: ignore
+)
+rsi.name = latexTextSC("rsi") + latexEscape(
+    rsi.name.removeprefix(f"{sr.name} RSI")  # type: ignore
+)
+bollinger.columns = [col.removeprefix(f"{sr.name} ") for col in bollinger.columns]
+sr.name = latexTextSC(latexEscape(ticker.lower()))
+srDaily.name = sr.name
 for yr in [2021, 2022, 2023]:
     plotInterval = pd.Interval(
         pd.Timestamp(yr, 1, 1), pd.Timestamp(yr + 1, 1, 1), closed="left"
@@ -1328,8 +1347,12 @@ for yr in [2021, 2022, 2023]:
         [bollinger],
         plotInterval=plotInterval,
         figsize=(14, 10.5),  # (8, 4.8),
-        title=latexEscape(f"{ticker} {plotInterval.left.year}"),
-        ylabels=map(latexEscape, ["Price / $", "MACD / $", "RSI"]),
+        title=f"{sr.name} {plotInterval.left.year}",
+        ylabels=[
+            latexEscape("Price / $"),
+            latexTextSC("macd") + latexEscape(" / $"),
+            latexTextSC("rsi"),
+        ],
         plotKWArgs={"alpha": 0.8},
         intervalColours=["xkcd:green", "xkcd:pale red"],
         bandColours=["C0"],
