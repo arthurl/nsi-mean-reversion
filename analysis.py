@@ -420,38 +420,40 @@ def plotIntraday(
 # weighted-average price each second.
 
 # %% tags=["active-py"]
-df = pd.read_csv(
+data = pd.read_csv(
     BASEDIR / r"bitstampUSD.csv",
     dtype={"Time": int, "Price": float, "Amount": float},
 )
-df["Date"] = pd.to_datetime(df["Time"], unit="s")
-del df["Time"]
+data["Date"] = pd.to_datetime(data["Time"], unit="s")
+del data["Time"]
 
 EPSILON = 10**-9
-weighted_mean = lambda x: np.average(x, weights=df.loc[x.index, "Amount"] + EPSILON)  # type: ignore
-df = df.groupby("Date").agg(Price=("Price", weighted_mean), Amount=("Amount", "sum"))
-df.to_csv(BASEDIR / r"bitstampUSD.s.csv")
+weighted_mean = lambda x: np.average(x, weights=data.loc[x.index, "Amount"] + EPSILON)  # type: ignore
+data = data.groupby("Date").agg(
+    Price=("Price", weighted_mean), Amount=("Amount", "sum")
+)
+data.to_csv(BASEDIR / r"bitstampUSD.s.csv")
 
 # %% [markdown]
 # This process is slow, so we cache the results.
 
 # %% tags=["active-py"]
-df = pd.read_csv(
+data = pd.read_csv(
     BASEDIR / r"bitstampUSD.s.csv",
     index_col="Date",
     usecols=["Date", "Price", "Amount"],
     parse_dates=True,
 )
-display(df)
+display(data)
 
 # %% [markdown]
 # 30-minute time span plot of BTC price.
 
 # %% tags=["active-py"]
 fig, ax = plt.subplots()
-df["Price"][
-    (datetime.datetime(2023, 12, 31, 19, 0) < df.index)
-    & (df.index < datetime.datetime(2023, 12, 31, 19, 30))
+data["Price"][
+    (datetime.datetime(2023, 12, 31, 19, 0) < data.index)
+    & (data.index < datetime.datetime(2023, 12, 31, 19, 30))
 ].plot(ax=ax)
 ax.set_xlabel("Time")
 ax.set_ylabel(latexEscape("Price / $"))
@@ -461,9 +463,9 @@ ax.set_ylabel(latexEscape("Price / $"))
 
 # %% tags=["active-py"]
 fig, ax = plt.subplots()
-df["Price"][
-    (datetime.datetime(2023, 12, 1, 0, 0) < df.index)
-    & (df.index < datetime.datetime(2024, 1, 1, 0, 0))
+data["Price"][
+    (datetime.datetime(2023, 12, 1, 0, 0) < data.index)
+    & (data.index < datetime.datetime(2024, 1, 1, 0, 0))
 ].plot(ax=ax)
 ax.set_xlabel("Date")
 ax.set_ylabel(latexEscape("Price / $"))
@@ -472,15 +474,15 @@ ax.set_ylabel(latexEscape("Price / $"))
 # Forward fill price data to get a price each second.
 
 # %% tags=["active-py"]
-prices = df["Price"].copy()
-prices.index = (df.index - df.index[0]) // pd.Timedelta("1s")
+prices = data["Price"].copy()
+prices.index = (data.index - data.index[0]) // pd.Timedelta("1s")
 prices = prices.reindex(
     np.arange(prices.index[0], prices.index[-1]), fill_value=np.nan
 ).ffill()
 
 fig, ax = plt.subplots()
 prices.plot(ax=ax)
-ax.set_xlabel(f"Seconds since {df.index[0]}")
+ax.set_xlabel(f"Seconds since {data.index[0]}")
 ax.set_ylabel(latexEscape("Price / $"))
 
 # %% [markdown]
@@ -990,14 +992,14 @@ def fetchTickersResampledAtTimes(
 
 # %%
 ticker = "5PAISA"
-df = fetchTicker(ticker)
-display(df)
+data = fetchTicker(ticker)
+display(data)
 
 # %%
 fig, ax = plt.subplots()
-df["close"][
-    (datetime.datetime(2023, 1, 1, 0, 0) <= df.index)
-    & (df.index < datetime.datetime(2024, 1, 1, 0, 0))
+data["close"][
+    (datetime.datetime(2023, 1, 1, 0, 0) <= data.index)
+    & (data.index < datetime.datetime(2024, 1, 1, 0, 0))
 ].plot(ax=ax)
 ax.set_xlabel("Date")
 ax.set_ylabel(latexEscape("Price / $"))
@@ -1005,9 +1007,9 @@ fig.savefig(BASEDIR / r"M3 - 5PAISA 2023.pdf", bbox_inches="tight")
 
 # %%
 fig, ax = plt.subplots()
-df["close"][
-    (datetime.datetime(2023, 12, 29, 12, 30) <= df.index)
-    & (df.index < datetime.datetime(2023, 12, 29, 14, 30))
+data["close"][
+    (datetime.datetime(2023, 12, 29, 12, 30) <= data.index)
+    & (data.index < datetime.datetime(2023, 12, 29, 14, 30))
 ].plot(ax=ax)
 ax.set_xlabel("Time")
 ax.set_ylabel(latexEscape("Price / $"))
@@ -1018,10 +1020,10 @@ fig.savefig(BASEDIR / r"M3 - 5PAISA 20231229 1230h.pdf", bbox_inches="tight")
 
 # %%
 ticker = "IDEA"
-df = fetchTicker(ticker)
+data = fetchTicker(ticker)
 
 fig = plotIntraday(
-    df["close"],
+    data["close"],
     dates=[datetime.date(2023, 10, 3)],
     ncols=1,
     plotWidth=6.4,
@@ -1034,12 +1036,12 @@ fig.savefig(BASEDIR / r"M4 - IDEA 20231003.pdf", bbox_inches="tight")
 
 # %%
 ticker = "GANGOTRI"
-df = fetchTicker(ticker)
+data = fetchTicker(ticker)
 
 fig, ax = plt.subplots()
-df["close"][
-    (datetime.datetime(2023, 10, 1, 0, 0) <= df.index)
-    & (df.index < datetime.datetime(2024, 1, 1, 0, 0))
+data["close"][
+    (datetime.datetime(2023, 10, 1, 0, 0) <= data.index)
+    & (data.index < datetime.datetime(2024, 1, 1, 0, 0))
 ].plot(ax=ax, style=".")
 ax.set_xlabel("Date")
 ax.set_ylabel(latexEscape("Price / $"))
@@ -1047,13 +1049,13 @@ fig.savefig(BASEDIR / r"M4 - GANGOTRI 2023Q4.pdf", bbox_inches="tight")
 
 # %%
 ticker = "HDFCBANK"
-df = fetchTicker(ticker)
+data = fetchTicker(ticker)
 
 fig, ax = plt.subplots()
-df["close"].plot(ax=ax)
+data["close"].plot(ax=ax)
 ax.set_xlabel("Time")
 ax.set_ylabel(latexEscape("Price / $"))
-print(df.shape)
+print(data.shape)
 
 
 # %%
@@ -1122,7 +1124,7 @@ def findMaxReturnLongShortIntervals(
 
 # %% tags=["active-py"]
 optimumTrades = findMaxReturnLongShortIntervals(
-    df[df.index.minute == 30]["close"],  # type:ignore
+    data[data.index.minute == 30]["close"],  # type:ignore
     maxInterval=pd.Timedelta(days=21),
     queueSize=200,  # type: ignore
 )
@@ -1140,7 +1142,7 @@ start = datetime.datetime(2021, 1, 1, 0, 0)
 end = start + pd.Timedelta(days=365)
 df2 = pd.DataFrame()
 for window in ["24h", "10D", "90D"]:
-    df2[f"{window} MA"] = df["close"].rolling(window=window, center=True).mean()
+    df2[f"{window} MA"] = data["close"].rolling(window=window, center=True).mean()
 df2 = df2[(start <= df2.index) & (df2.index < end)]
 
 fig, ax = plt.subplots(figsize=(14, 10.5))
@@ -1256,7 +1258,7 @@ def findMACDOptimumReturnIntervals(
 
 
 # %%
-sr = df["close"]
+sr = data["close"]
 df2 = pd.DataFrame()
 for window in ["24h", "30D"]:
     df2[f"{latexEscape(window)} {latexTextSC('ma')}"] = sr.rolling(
@@ -1310,7 +1312,7 @@ display(resampledData)
 display(resampledData[resampledData.isna().any(axis=1)])
 
 # %%
-sr = df["close"]
+sr = data["close"]
 sr.name = ticker
 srDaily = resampledData[ticker].at_time(datetime.time(10, 0))
 df2 = pd.DataFrame()
@@ -1397,64 +1399,64 @@ display(sklearn.metrics.roc_auc_score(yTest, yProbTest))
 
 # %%
 ticker = "SUNPHARMA"
-df = fetchTicker(ticker)
+data = fetchTicker(ticker)
 
 fig, ax = plt.subplots()
-df["close"].plot(ax=ax)
+data["close"].plot(ax=ax)
 ax.set_xlabel("Time")
 ax.set_ylabel(latexEscape("Price / $"))
-print(df.shape)
+print(data.shape)
 
 # %%
 ticker = "RELIANCE"
-df = fetchTicker(ticker)
+data = fetchTicker(ticker)
 
 fig, ax = plt.subplots()
-df["close"].plot(ax=ax)
+data["close"].plot(ax=ax)
 ax.set_xlabel("Time")
 ax.set_ylabel(latexEscape("Price / $"))
-print(df.shape)
+print(data.shape)
 
 # %%
 ticker = "SBIN"
-df = fetchTicker(ticker)
+data = fetchTicker(ticker)
 
 fig, ax = plt.subplots()
-df["close"].plot(ax=ax)
+data["close"].plot(ax=ax)
 ax.set_xlabel("Time")
 ax.set_ylabel(latexEscape("Price / $"))
-print(df.shape)
+print(data.shape)
 
 # %%
 ticker = "ADANIPORTS"
-df = fetchTicker(ticker)
+data = fetchTicker(ticker)
 
 fig, ax = plt.subplots()
-df["close"].plot(ax=ax)
+data["close"].plot(ax=ax)
 ax.set_xlabel("Time")
 ax.set_ylabel(latexEscape("Price / $"))
-print(df.shape)
+print(data.shape)
 
 # %%
 ticker = "NIFTYBEES"
-df = fetchTicker(ticker)
+data = fetchTicker(ticker)
 
 fig, ax = plt.subplots()
-df["close"].plot(ax=ax)
+data["close"].plot(ax=ax)
 ax.set_xlabel("Time")
 ax.set_ylabel(latexEscape("Price / $"))
-print(df.shape)
+print(data.shape)
 
 # %%
 ticker = "INDIAVIX"
-df = fetchTicker(ticker)
-df.to_csv(BASEDIR / r"df.csv")
+data = fetchTicker(ticker)
+data.to_csv(BASEDIR / r"data.csv")
 
 fig, ax = plt.subplots()
-df["close"][
-    (datetime.datetime(2021, 1, 1, 0, 0) <= df.index)
-    & (df.index < datetime.datetime(2021, 4, 1, 0, 0))
+data["close"][
+    (datetime.datetime(2021, 1, 1, 0, 0) <= data.index)
+    & (data.index < datetime.datetime(2021, 4, 1, 0, 0))
 ].plot(ax=ax, style=".")
 ax.set_xlabel("Time")
 ax.set_ylabel(latexEscape("Price / $"))
-print(df.shape)
+print(data.shape)
