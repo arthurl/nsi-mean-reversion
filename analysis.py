@@ -1259,9 +1259,9 @@ def findMACDOptimumReturnIntervals(
 
 # %%
 sr = data["close"]
-df2 = pd.DataFrame()
+sma = pd.DataFrame()
 for window in ["24h", "30D"]:
-    df2[f"{latexEscape(window)} {latexTextSC('ma')}"] = sr.rolling(
+    sma[f"{latexEscape(window)} {latexTextSC('ma')}"] = sr.rolling(
         window=window, center=True
     ).mean()
 optimumTrades, macdCen = findMACDOptimumReturnIntervals(sr)
@@ -1275,7 +1275,7 @@ macdCen.name = latexTextSC("macd") + latexEscape(
 )
 sr.name = latexTextSC(latexEscape(ticker.lower()))
 fig = plotTimeseries(
-    [df2, macdCen],
+    [sma, macdCen],
     [
         optimumTrades[optimumTrades["direction"] > 0]["time interval"],
         optimumTrades[optimumTrades["direction"] < 0]["time interval"],
@@ -1289,7 +1289,7 @@ fig.axes[1].axhline(y=0, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: 
 fig.savefig(  # type: ignore
     BASEDIR / f"M6 - {ticker} {plotInterval.left.year} trades.pdf", bbox_inches="tight"
 )
-del sr, df2, macdCen, optimumTrades
+del sr, sma, macdCen, optimumTrades
 
 # %%
 equityUniverse.drop(
@@ -1315,10 +1315,12 @@ display(resampledData[resampledData.isna().any(axis=1)])
 sr = data["close"]
 sr.name = ticker
 srDaily = resampledData[ticker].at_time(datetime.time(10, 0))
-df2 = pd.DataFrame()
+ewm = pd.DataFrame()
 for window in ["24h", "30D"]:
-    df2[f"{latexEscape(window)} {latexTextSC('ma')}"] = sr.rolling(
-        window=window, center=True
+    ewm[f"{latexEscape(window)} {latexTextSC('ema')}"] = sr.ewm(
+        halflife=pd.Timedelta(window),
+        times=sr.index,  # type: ignore
+        min_periods=10,
     ).mean()
 macd = computeMACD(sr)
 rsi = computeRSI(srDaily, minObservations=10)
@@ -1341,7 +1343,7 @@ for yr in [2021, 2022, 2023]:
         pd.Timestamp(yr, 1, 1), pd.Timestamp(yr + 1, 1, 1), closed="left"
     )
     fig = plotTimeseries(
-        [df2, macd, rsi],
+        [ewm, macd, rsi],
         [
             targetTrades[targetTrades["direction"] > 0]["time interval"],
             targetTrades[targetTrades["direction"] < 0]["time interval"],
@@ -1363,7 +1365,7 @@ for yr in [2021, 2022, 2023]:
     fig.axes[2].axhline(y=80, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
     del yr, plotInterval
 
-X = rsi.to_frame().join([macd, bollinger, df2], how="left", sort=True).dropna()
+X = rsi.to_frame().join([macd, bollinger, ewm], how="left", sort=True).dropna()
 y = pd.Series(
     data=X.index.map(
         lambda t: any(t in interval for interval in targetTrades["time interval"])
@@ -1373,7 +1375,7 @@ y = pd.Series(
 XTrain, XTest, yTrain, yTest = sklearn.model_selection.train_test_split(
     X, y, test_size=0.2, shuffle=False
 )
-del sr, srDaily, df2, macd, rsi, bollinger, _, targetTrades, X, y
+del sr, srDaily, ewm, macd, rsi, bollinger, _, targetTrades, X, y
 
 # %%
 import sklearn.tree
