@@ -1471,21 +1471,22 @@ del rescaledFeatures, X, y, XTrain, XTest, yTrain, yTest
 del sr, srDaily, rsi, stdDev, _
 
 # %%
-import sklearn.tree
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
 
-clf = sklearn.tree.DecisionTreeClassifier(
-    criterion="gini", max_depth=3, min_samples_leaf=25
+paramSpace = {
+    "svc__C": [10**i for i in range(-9, 9)],
+    "svc__kernel": ["rbf"],
+    "svc__class_weight": ["balanced"],
+}
+pipe = sklearn.pipeline.make_pipeline(
+    StandardScaler(),
+    SVC(probability=True, break_ties=True, cache_size=SKLCACHE, random_state=RANDSEED),
 )
+clf = sklearn.model_selection.GridSearchCV(pipe, paramSpace, n_jobs=-2, verbose=0)
+del paramSpace, pipe
 clf.fit(*infData["train"])
-
-fig, ax = plt.subplots(figsize=(14, 10.5))
-sklearn.tree.plot_tree(
-    clf,
-    feature_names=infData["train"][0].columns,  # type: ignore
-    class_names=["out", "in"],
-    filled=True,
-    ax=ax,
-)
+display(clf.best_params_)
 
 # %%
 for label, (X, y) in infData.items():
