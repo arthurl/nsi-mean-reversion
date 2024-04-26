@@ -207,14 +207,18 @@ def computeRSI(sr: pd.Series, /, *, period: int | float = 14, minObservations=0)
     return rsi
 
 
-def computeBollingerBands(sr: pd.Series, /, *, period="20D", K: int | float = 2):
+def computeBollingerBands(
+    sr: pd.Series, /, *, period="20D", K: int | float = 2
+) -> tuple[pd.DataFrame, pd.Series]:
     movingWin = sr.rolling(window=period, center=False)
     sma = movingWin.mean()
-    kStdDev = K * movingWin.std()
+    stdDev = movingWin.std()
+    stdDev.name = f"{sr.name} StdDev({period})"
+    kStdDev = K * stdDev
     bollinger = pd.DataFrame()
     bollinger[f"{sr.name} Bollinger({period}, {K}) upper"] = sma + kStdDev
     bollinger[f"{sr.name} Bollinger({period}, {K}) lower"] = sma - kStdDev
-    return bollinger
+    return bollinger, stdDev
 
 
 # %% [markdown]
@@ -1324,7 +1328,7 @@ for window in ["24h", "30D"]:
     ).mean()
 macd = computeMACD(sr)
 rsi = computeRSI(srDaily, minObservations=10)
-bollinger = computeBollingerBands(srDaily)
+bollinger, stdDev = computeBollingerBands(srDaily)
 targetTrades, _ = findMACDOptimumReturnIntervals(sr)
 
 display(targetTrades)
@@ -1336,6 +1340,7 @@ rsi.name = latexTextSC("rsi") + latexEscape(
     rsi.name.removeprefix(f"{sr.name} RSI")  # type: ignore
 )
 bollinger.columns = [col.removeprefix(f"{sr.name} ") for col in bollinger.columns]
+stdDev.name = latexEscape(stdDev.name.removeprefix(f"{sr.name} "))  # type: ignore
 sr.name = latexTextSC(latexEscape(ticker.lower()))
 srDaily.name = sr.name
 for yr in [2021, 2022, 2023]:
@@ -1365,7 +1370,7 @@ for yr in [2021, 2022, 2023]:
     fig.axes[2].axhline(y=80, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
     del yr, plotInterval
 
-X = rsi.to_frame().join([macd, bollinger, ewm], how="left", sort=True).dropna()
+X = rsi.to_frame().join([macd, stdDev, ewm], how="left", sort=True).dropna()
 y = pd.Series(
     data=X.index.map(
         lambda t: any(t in interval for interval in targetTrades["time interval"])
@@ -1375,7 +1380,7 @@ y = pd.Series(
 XTrain, XTest, yTrain, yTest = sklearn.model_selection.train_test_split(
     X, y, test_size=0.2, shuffle=False
 )
-del sr, srDaily, ewm, macd, rsi, bollinger, _, targetTrades, X, y
+del sr, srDaily, ewm, macd, rsi, bollinger, stdDev, _, targetTrades, X, y
 
 # %%
 import sklearn.tree
