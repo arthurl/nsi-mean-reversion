@@ -1438,7 +1438,13 @@ for yr in [2021, 2022, 2023]:
     fig.axes[2].axhline(y=80, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
     del yr, plotInterval
 
-X = rsi.to_frame().join([macd, stdDev, ewm], how="left", sort=True).dropna()
+rescaledFeatures = (
+    stdDev.to_frame()
+    .join([ewm, macd, srDaily.shift(range(1, 22))], how="left", sort=True)  # type: ignore
+    .dropna()
+    .div(srDaily, axis="index")
+)
+X = rescaledFeatures.join([rsi], how="left", sort=True).dropna()
 y = pd.Series(
     data=X.index.map(
         lambda t: any(t in interval for interval in targetTrades["time interval"])
@@ -1448,7 +1454,7 @@ y = pd.Series(
 XTrain, XTest, yTrain, yTest = sklearn.model_selection.train_test_split(
     X, y, test_size=0.2, shuffle=False
 )
-del sr, srDaily, rsi, stdDev, _, X, y
+del sr, srDaily, rsi, stdDev, _, rescaledFeatures, X, y
 
 # %%
 import sklearn.tree
