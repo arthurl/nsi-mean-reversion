@@ -24,6 +24,7 @@
 from IPython.core.display_functions import display
 from types import NoneType
 from collections.abc import Callable, Iterable, Iterator, Collection
+from collections import namedtuple
 import datetime
 from pathlib import Path
 import itertools
@@ -35,7 +36,9 @@ import seaborn as sns
 import numpy as np
 import pandas as pd
 import sklearn as sk
+import sklearn.pipeline
 import sklearn.model_selection
+import sklearn.utils
 
 # %% [markdown]
 # Flags / global config. Please modify them as needed.
@@ -43,6 +46,8 @@ import sklearn.model_selection
 # %%
 BASEDIR: Path = Path(r"/home/arthur/Downloads/MScFE/capstone")
 USELATEX = True
+SKLCACHE = 4096  # cache size in MB to use with sklearn
+RANDSEED = None
 sns.set_context("paper")
 sns.set_palette("deep")
 
@@ -1384,6 +1389,9 @@ display(resampledData)
 display(resampledData[resampledData.isna().any(axis=1)])
 
 # %%
+InferenceData = namedtuple("InferenceData", ["X", "y"])
+
+# %%
 sr = data["close"]
 sr.name = ticker
 srDaily = resampledData[ticker].at_time(datetime.time(10, 0))
@@ -1454,7 +1462,13 @@ y = pd.Series(
 XTrain, XTest, yTrain, yTest = sklearn.model_selection.train_test_split(
     X, y, test_size=0.2, shuffle=False
 )
-del sr, srDaily, rsi, stdDev, _, rescaledFeatures, X, y
+infData = {"train": InferenceData(XTrain, yTrain), "test": InferenceData(XTest, yTest)}
+infData = {
+    k: InferenceData(*sklearn.utils.shuffle(*v, random_state=RANDSEED))
+    for k, v in infData.items()
+}
+del rescaledFeatures, X, y, XTrain, XTest, yTrain, yTest
+del sr, srDaily, rsi, stdDev, _
 
 # %%
 import sklearn.tree
@@ -1462,46 +1476,65 @@ import sklearn.tree
 clf = sklearn.tree.DecisionTreeClassifier(
     criterion="gini", max_depth=3, min_samples_leaf=25
 )
-clf.fit(XTrain, yTrain)
+clf.fit(*infData["train"])
 
 fig, ax = plt.subplots(figsize=(14, 10.5))
-_ = sklearn.tree.plot_tree(
-    clf, feature_names=XTrain.columns, class_names=["out", "in"], filled=True, ax=ax
+sklearn.tree.plot_tree(
+    clf,
+    feature_names=infData["train"][0].columns,  # type: ignore
+    class_names=["out", "in"],
+    filled=True,
+    ax=ax,
 )
 
 # %%
-X = XTrain
-yPred = pd.Series(data=clf.predict(X), index=X.index)  # type: ignore
-fig = plotTimeseries(
-    [ewm, macd],
-    [targetTrades["time interval"], getIntervalsWhereTrue(yPred)],  # type: ignore
-    [bollinger],
-    plotInterval=pd.Interval(X.index.min(), X.index.max()),
-    figsize=(14, 10.5),  # (8, 4.8),
-    title=ticker,
-    ylabels=[
-        latexEscape("Price / $"),
-        latexTextSC("macd") + latexEscape(" / $"),
-    ],
-    plotKWArgs={"alpha": 0.8},
-    intervalColours=["C8", "C9"],
-    bandColours=["C0"],
-)
-fig.axes[1].axhline(y=0, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
-del X, yPred
+for label, (X, y) in infData.items():
+    yPred = pd.Series(data=clf.predict(X), index=X.index)  # type: ignore
+    fig = plotTimeseries(
+        [ewm, macd],
+        [targetTrades["time interval"], getIntervalsWhereTrue(yPred)],  # type: ignore
+        [bollinger],
+        plotInterval=pd.Interval(X.index.min(), X.index.max()),
+        figsize=(14, 10.5),  # (8, 4.8),
+        title=f"{latexTextSC(latexEscape(ticker.lower()))} ({label})",
+        ylabels=[
+            latexEscape("Price / $"),
+            latexTextSC("macd") + latexEscape(" / $"),
+        ],
+        plotKWArgs={"alpha": 0.8},
+        intervalColours=["C8", "C9"],
+        bandColours=["C0"],
+    )
+    fig.axes[1].axhline(y=0, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
+    del label, X, y, yPred
 
 # %%
 import sklearn.metrics
 
-yProbTest = clf.predict_proba(XTest)[:, 1]  # type:ignore
+fig, axes = plt.subplots(
+    nrows=1,
+    ncols=(ncols := len(infData)),
+    sharey=True,
+    figsize=(6.4 * 2, 4.8),
+    # gridspec_kw={"wspace": 0},
+)
+if ncols == 1:
+    axes = [axes]
+del ncols
+for ax, (label, (X, y)) in zip(axes, infData.items(), strict=True):
+    yProb = clf.predict_proba(X)[:, 1]  # type:ignore
+    fpr, tpr, threshold = sklearn.metrics.roc_curve(y, yProb)
+    ax.plot(fpr, threshold)
+    ax.set_xlabel(latexTextSC("fpr"))
+    ax.set_ylabel("Threshold")
+    axR = ax.twinx()
+    axR.plot(fpr, tpr)
+    axR.plot(fpr, fpr, alpha=0.2, color="xkcd:grey", linestyle="--")
+    axR.set_ylabel(latexTextSC("tpr"))
+    ax.set_title(label)
+    print(f"{label} roc_auc_score = {sklearn.metrics.roc_auc_score(y, yProb)}")
+    del X, y, yProb, fpr, tpr, threshold
 
-fpr, tpr, _ = sklearn.metrics.roc_curve(yTest, yProbTest)
-fig, ax = plt.subplots()
-ax.plot(fpr, tpr)
-ax.plot(fpr, fpr, alpha=0.2, color="xkcd:grey", linestyle="--")
-ax.set_xlabel(latexTextSC("fpr"))
-ax.set_ylabel(latexTextSC("tpr"))
-display(sklearn.metrics.roc_auc_score(yTest, yProbTest))
 
 # %% [markdown]
 # Next example, “SUNPHARMA”.
