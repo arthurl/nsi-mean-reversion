@@ -1511,29 +1511,26 @@ for label, (X, y) in infData.items():
 # %%
 import sklearn.metrics
 
-fig, axes = plt.subplots(
-    nrows=1,
-    ncols=(ncols := len(infData)),
-    sharey=True,
-    figsize=(6.4 * 2, 4.8),
-    # gridspec_kw={"wspace": 0},
-)
-if ncols == 1:
-    axes = [axes]
-del ncols
-for ax, (label, (X, y)) in zip(axes, infData.items(), strict=True):
+fig, ax = plt.subplots()
+X, y = infData["test"]
+yProb = clf.predict_proba(X)[:, 1]  # type:ignore
+fpr, tpr, threshold = sklearn.metrics.roc_curve(y, yProb)
+lines = ax.plot(fpr, threshold, color="C0", label="Threshold (test)")
+ax.set_xlabel(latexTextSC("fpr"))
+ax.set_ylabel("Threshold")
+axR = ax.twinx()
+for i, (label, (X, y)) in enumerate(infData.items(), start=1):
     yProb = clf.predict_proba(X)[:, 1]  # type:ignore
     fpr, tpr, threshold = sklearn.metrics.roc_curve(y, yProb)
-    ax.plot(fpr, threshold)
-    ax.set_xlabel(latexTextSC("fpr"))
-    ax.set_ylabel("Threshold")
-    axR = ax.twinx()
-    axR.plot(fpr, tpr)
-    axR.plot(fpr, fpr, alpha=0.2, color="xkcd:grey", linestyle="--")
-    axR.set_ylabel(latexTextSC("tpr"))
-    ax.set_title(label)
+    lines.extend(
+        axR.plot(fpr, tpr, color=f"C{i}", label=f"{latexTextSC('roc')} ({label})")
+    )
     print(f"{label} roc_auc_score = {sklearn.metrics.roc_auc_score(y, yProb)}")
-    del X, y, yProb, fpr, tpr, threshold
+    del i, label
+axR.plot(fpr, fpr, alpha=0.2, color="xkcd:grey", linestyle="--")
+axR.set_ylabel(latexTextSC("tpr"))
+ax.legend(handles=lines, loc="center right")
+del fig, ax, X, y, yProb, fpr, tpr, threshold, lines
 
 
 # %% [markdown]
