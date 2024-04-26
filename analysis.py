@@ -135,6 +135,74 @@ def timeseriesByDay(ts: pd.Series | pd.DataFrame, dt: datetime.date):
     return ts[(start <= ts.index) & (ts.index < end)]
 
 
+def coalesceIntervals(intervals: Iterable[pd.Interval]) -> set[pd.Interval]:
+    def joinOverlappingIntervals(intA: pd.Interval, intB: pd.Interval) -> pd.Interval:
+        if intA.left < intB.left:
+            leftTime = intA.left
+            leftClosed = intA.closed_left
+        elif intA.left == intB.left:
+            leftTime = intA.left
+            leftClosed = intA.closed_left or intB.closed_left
+        else:
+            leftTime = intB.left
+            leftClosed = intB.closed_left
+        if intA.right > intB.right:
+            rightTime = intA.right
+            rightClosed = intA.closed_right
+        elif intA.right == intB.right:
+            rightTime = intA.right
+            rightClosed = intA.closed_right or intB.closed_right
+        else:
+            rightTime = intB.right
+            rightClosed = intB.closed_right
+        if leftClosed:
+            closed = "both" if rightClosed else "left"
+        else:
+            closed = "right" if rightClosed else "neither"
+        return pd.Interval(leftTime, rightTime, closed=closed)
+
+    aggIntervals = set()
+    for interval in intervals:
+        overlapped = False
+        for aggInterval in aggIntervals:
+            if any(
+                [
+                    interval.overlaps(aggInterval),
+                    interval.right == aggInterval.left
+                    and (interval.closed_right or aggInterval.closed_left),
+                    aggInterval.right == interval.left
+                    and (aggInterval.closed_right or interval.closed_left),
+                ]
+            ):
+                overlapped = True
+                aggIntervals.remove(aggInterval)
+                aggIntervals.add(joinOverlappingIntervals(interval, aggInterval))
+                break
+        if not overlapped:
+            aggIntervals.add(interval)
+    return aggIntervals
+
+
+def getIntervalsWhereTrue(
+    sr: pd.Series, /, *, key=lambda s: s.astype(bool), closed="right"
+) -> pd.arrays.IntervalArray:
+    sr = sr.sort_index()
+    beforeTime = (
+        sr.index
+        - (sr.index - sr.index.to_series().shift(1, fill_value=sr.index[0])) / 2
+    )
+    afterTime = (
+        sr.index
+        + (sr.index.to_series().shift(-1, fill_value=sr.index[-1]) - sr.index) / 2
+    )
+    trueIntervals = coalesceIntervals(
+        pd.arrays.IntervalArray.from_arrays(beforeTime, afterTime, closed=closed)[
+            key(sr)
+        ]
+    )
+    return pd.arrays.IntervalArray(data=np.array(sorted(trueIntervals)), closed=closed)
+
+
 def batched(iterable: Iterable, n: int) -> Iterator:
     # from python docs
     if n < 1:
@@ -1380,7 +1448,7 @@ y = pd.Series(
 XTrain, XTest, yTrain, yTest = sklearn.model_selection.train_test_split(
     X, y, test_size=0.2, shuffle=False
 )
-del sr, srDaily, ewm, macd, rsi, bollinger, stdDev, _, targetTrades, X, y
+del sr, srDaily, rsi, stdDev, _, X, y
 
 # %%
 import sklearn.tree
@@ -1396,9 +1464,37 @@ _ = sklearn.tree.plot_tree(
 )
 
 # %%
+X = XTrain
+yPred = pd.Series(data=clf.predict(X), index=X.index)  # type: ignore
+fig = plotTimeseries(
+    [ewm, macd],
+    [targetTrades["time interval"], getIntervalsWhereTrue(yPred)],  # type: ignore
+    [bollinger],
+    plotInterval=pd.Interval(X.index.min(), X.index.max()),
+    figsize=(14, 10.5),  # (8, 4.8),
+    title=ticker,
+    ylabels=[
+        latexEscape("Price / $"),
+        latexTextSC("macd") + latexEscape(" / $"),
+    ],
+    plotKWArgs={"alpha": 0.8},
+    intervalColours=["C8", "C9"],
+    bandColours=["C0"],
+)
+fig.axes[1].axhline(y=0, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
+del X, yPred
+
+# %%
 import sklearn.metrics
 
 yProbTest = clf.predict_proba(XTest)[:, 1]  # type:ignore
+
+fpr, tpr, _ = sklearn.metrics.roc_curve(yTest, yProbTest)
+fig, ax = plt.subplots()
+ax.plot(fpr, tpr)
+ax.plot(fpr, fpr, alpha=0.2, color="xkcd:grey", linestyle="--")
+ax.set_xlabel(latexTextSC("fpr"))
+ax.set_ylabel(latexTextSC("tpr"))
 display(sklearn.metrics.roc_auc_score(yTest, yProbTest))
 
 # %% [markdown]
