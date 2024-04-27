@@ -1479,17 +1479,20 @@ del sr, srDaily, rsi, stdDev, _
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
+balanceInvested = {0: sum(infData["train"].y != 0) / len(infData["train"].y)}
+balanceInvested[1] = (1 - balanceInvested[0]) / 2
+balanceInvested[-1] = balanceInvested[1]
 paramSpace = {
     "svc__C": [10**i for i in range(-9, 9)],
     "svc__kernel": ["rbf"],
-    "svc__class_weight": ["balanced"],
+    "svc__class_weight": ["balanced", balanceInvested],
 }
 pipe = sklearn.pipeline.make_pipeline(
     StandardScaler(),
     SVC(probability=True, break_ties=True, cache_size=SKLCACHE, random_state=RANDSEED),
 )
 clf = sklearn.model_selection.GridSearchCV(pipe, paramSpace, n_jobs=-2, verbose=0)
-del paramSpace, pipe
+del balanceInvested, paramSpace, pipe
 clf.fit(*infData["train"])
 display(clf.best_params_)
 
