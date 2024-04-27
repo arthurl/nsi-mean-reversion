@@ -303,22 +303,40 @@ def plotTimeseries(
     dataSets: Collection[
         pd.Series | pd.DataFrame
     ],  # first element uses the left y-axis, the others will use the right
-    intervalSets: Iterable[pd.arrays.IntervalArray] = iter([]),
-    bands: Iterable[pd.DataFrame] = iter([]),
+    intervalSets: Collection[pd.arrays.IntervalArray] = [],
+    bands: Collection[pd.DataFrame] = [],
     /,
     *,
     plotInterval: pd.Interval | NoneType = None,
     figsize=None,
     title: str = "",
     ylabels: Iterable[str] = iter([]),
-    plotKWArgs: dict | NoneType = None,
+    plotKWArgs: dict | Iterable[dict] | NoneType = None,
     intervalColours: Iterable[str] = iter([]),
-    intervalKWArgs: dict | NoneType = None,
+    intervalKWArgs: dict | Iterable[dict] | NoneType = None,
     bandUpperColSuffix="upper",
     bandLowerColSuffix="lower",
     bandColours: Iterable[str] = iter([]),
-    bandKWArgs: dict | NoneType = None,
+    bandKWArgs: dict | Iterable[dict] | NoneType = None,
 ):
+    defaultPlotKWArgs = {}
+    defaultIntervalKWArgs = {"alpha": 0.2}
+    defaultBandKWArgs = {"alpha": 0.1}
+
+    def resolveKWArgs(
+        length: int, kwArgs: dict | Iterable[dict] | NoneType, defaultKWArgs: dict
+    ) -> list[dict]:
+        kwArgs = defaultKWArgs if kwArgs is None else kwArgs
+        if isinstance(kwArgs, dict):
+            return [defaultKWArgs | kwArgs] * length
+        else:
+            result = [defaultKWArgs | args for args in kwArgs]
+            if len(result) != length:
+                raise ValueError(
+                    "Length of keyword args must be the same as the input collection."
+                )
+            return result
+
     def colFromSuffix(df: pd.DataFrame, suffix: str) -> str:
         candidates = [col for col in df.columns if col.endswith(suffix)]
         if len(candidates) == 1:
@@ -334,18 +352,20 @@ def plotTimeseries(
         closed="left",
     )
     ylabelIt = iter(ylabels)
-    plotKWArgs = plotKWArgs or {}
+    plotKWArgsList = resolveKWArgs(len(dataSets), plotKWArgs, defaultPlotKWArgs)
     intervalColourIt = iter(intervalColours)
-    intervalKWArgs = {"alpha": 0.2} | (intervalKWArgs or {})
+    intervalKWArgsList = resolveKWArgs(
+        len(intervalSets), intervalKWArgs, defaultIntervalKWArgs
+    )
     bandColourIt = iter(bandColours)
-    bandKWArgs = {"alpha": 0.1} | (bandKWArgs or {})
+    bandKWArgsList = resolveKWArgs(len(bands), bandKWArgs, defaultBandKWArgs)
 
     fig, ax = plt.subplots(figsize=figsize)
-    data = next(dataSetIt := iter(dataSets))
+    data: pd.DataFrame = next(dataSetIt := iter(dataSets))  # type: ignore
     cCounter = len(data.columns) if isinstance(data, pd.DataFrame) else 1
     colours = [f"C{i}" for i in range(cCounter)]
     data[(plotInterval.left <= data.index) & (data.index < plotInterval.right)].plot(
-        ax=ax, legend=False, color=colours, **plotKWArgs
+        ax=ax, legend=False, color=colours, **plotKWArgsList[0]
     )
     ax.set_xlabel("Date")
     if ylabel := next(ylabelIt, False):
@@ -355,7 +375,7 @@ def plotTimeseries(
     axBBoxXMax = ax.get_tightbbox().xmax
     axPrev = ax
 
-    for data in dataSetIt:
+    for data, kwArgs in zip(dataSetIt, plotKWArgsList[1:], strict=True):
         axR = ax.twinx()
         # move spine out of the previous bounding box
         axR.spines.right.set_position(
@@ -372,7 +392,7 @@ def plotTimeseries(
         yAxisColour = colours[0] if len(dataSets) > 2 and len(colours) == 1 else None
         data[
             (plotInterval.left <= data.index) & (data.index < plotInterval.right)
-        ].plot(ax=axR, legend=False, color=colours, **plotKWArgs)
+        ].plot(ax=axR, legend=False, color=colours, **kwArgs)
         if ylabel := next(ylabelIt, False):
             if yAxisColour is None:
                 axR.set_ylabel(ylabel)
@@ -382,18 +402,16 @@ def plotTimeseries(
             axR.tick_params(axis="y", colors=yAxisColour)
         axPrev = axR
 
-    for intervals in intervalSets:
+    for intervals, kwArgs in zip(intervalSets, intervalKWArgsList, strict=True):
         colour = next(intervalColourIt, None)
         if colour is None:
             colour = f"C{cCounter}"
             cCounter += 1
         for interval in intervals:
             if interval.overlaps(plotInterval):
-                ax.axvspan(
-                    interval.left, interval.right, color=colour, **intervalKWArgs
-                )
+                ax.axvspan(interval.left, interval.right, color=colour, **kwArgs)
 
-    for band in bands:
+    for band, kwArgs in zip(bands, bandKWArgsList, strict=True):
         colour = next(bandColourIt, None)
         if colour is None:
             colour = f"C{cCounter}"
@@ -403,7 +421,7 @@ def plotTimeseries(
         ]
         lowerBand = band[colFromSuffix(band, bandLowerColSuffix)]
         upperBand = band[colFromSuffix(band, bandUpperColSuffix)]
-        ax.fill_between(band.index, lowerBand, upperBand, color=colour, **bandKWArgs)
+        ax.fill_between(band.index, lowerBand, upperBand, color=colour, **kwArgs)
 
     ax.legend(handles=[ln for ax in fig.axes for ln in ax.get_lines()])
     return fig
