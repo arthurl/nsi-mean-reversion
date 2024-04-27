@@ -1520,8 +1520,10 @@ for label, (X, y) in infData.items():
     fig = plotTimeseries(
         [ewm, macd],
         [
-            targetTrades["time interval"],  # type: ignore
-            getIntervalsWhereTrue(yPred, key=lambda x: x != 0),
+            targetTrades[targetTrades["direction"] > 0]["time interval"],  # type: ignore
+            targetTrades[targetTrades["direction"] < 0]["time interval"],  # type: ignore
+            getIntervalsWhereTrue(yPred, key=lambda x: x > 0),
+            getIntervalsWhereTrue(yPred, key=lambda x: x < 0),
         ],
         [bollinger],
         plotInterval=pd.Interval(X.index.min(), X.index.max()),
@@ -1532,11 +1534,20 @@ for label, (X, y) in infData.items():
             latexTextSC("macd") + latexEscape(" / $"),
         ],
         plotKWArgs={"alpha": 0.8},
-        intervalColours=["C8", "C9"],
+        intervalColours=["xkcd:green", "xkcd:pale red"] * 2,
+        intervalKWArgs=[
+            {"ymin": 0, "ymax": 0.7},
+            {"ymin": 0.01, "ymax": 0.71},
+            {"ymin": 0.29, "ymax": 0.99},
+            {"ymin": 0.3, "ymax": 1},
+        ],
         bandColours=["C0"],
     )
-    fig.axes[1].axhline(y=0, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
-    del label, X, y, yPred
+    axes: list = fig.axes  # type: ignore
+    axes[1].axhline(y=0, alpha=0.2, color="xkcd:grey", linestyle="--")
+    axes[0].annotate("(predicted intervals)", (0.1, 0.9), xycoords="axes fraction")
+    axes[0].annotate("(target intervals)", (0.1, 0.1), xycoords="axes fraction")
+    del label, X, y, yPred, axes
 
 # %%
 import sklearn.metrics
