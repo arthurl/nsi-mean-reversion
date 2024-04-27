@@ -1446,6 +1446,16 @@ for yr in [2021, 2022, 2023]:
     fig.axes[2].axhline(y=80, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
     del yr, plotInterval
 
+
+def getDirection(t) -> int:
+    for interval, direction in targetTrades[["time interval", "direction"]].itertuples(
+        index=False
+    ):
+        if t in interval:
+            return direction
+    return 0
+
+
 rescaledFeatures = (
     stdDev.to_frame()
     .join([ewm, macd, srDaily.shift(range(1, 22))], how="left", sort=True)  # type: ignore
@@ -1453,12 +1463,7 @@ rescaledFeatures = (
     .div(srDaily, axis="index")
 )
 X = rescaledFeatures.join([rsi], how="left", sort=True).dropna()
-y = pd.Series(
-    data=X.index.map(
-        lambda t: any(t in interval for interval in targetTrades["time interval"])
-    ),
-    index=X.index,
-).astype(int)
+y = pd.Series(data=X.index.map(getDirection), index=X.index)
 XTrain, XTest, yTrain, yTest = sklearn.model_selection.train_test_split(
     X, y, test_size=0.2, shuffle=False
 )
@@ -1493,7 +1498,10 @@ for label, (X, y) in infData.items():
     yPred = pd.Series(data=clf.predict(X), index=X.index)  # type: ignore
     fig = plotTimeseries(
         [ewm, macd],
-        [targetTrades["time interval"], getIntervalsWhereTrue(yPred)],  # type: ignore
+        [
+            targetTrades["time interval"],  # type: ignore
+            getIntervalsWhereTrue(yPred, key=lambda x: x != 0),
+        ],
         [bollinger],
         plotInterval=pd.Interval(X.index.min(), X.index.max()),
         figsize=(14, 10.5),  # (8, 4.8),
