@@ -124,6 +124,21 @@ async def concurrent_map_fold(
 
 
 # %% [markdown]
+# Helper functions for Pandas.
+
+
+# %%
+def applyLabelMap(
+    labelMap: dict[str, str], data: Iterable[pd.Series | pd.DataFrame]
+) -> None:
+    for s in data:
+        if isinstance(s, pd.Series):
+            s.name = labelMap[s.name]  # type: ignore
+        elif isinstance(s, pd.DataFrame):
+            s.columns = [labelMap[col] for col in s.columns]
+
+
+# %% [markdown]
 # Helper functions for time series processing.
 
 
@@ -1410,16 +1425,21 @@ display(resampledData[resampledData.isna().any(axis=1)])
 InferenceData = namedtuple("InferenceData", ["X", "y"])
 
 # %%
+labelMap = {}
 sr = data["close"]
 sr.name = ticker
+labelMap[sr.name] = latexTextSC(latexEscape(ticker.lower()))
 srDaily = resampledData[ticker].at_time(datetime.time(10, 0))
 ewm = pd.DataFrame()
 for window in ["24h", "30D"]:
-    ewm[f"{latexEscape(window)} {latexTextSC('ema')}"] = sr.ewm(
+    label = f"{ticker} {window} EMA"
+    labelMap[label] = f"{labelMap[sr.name]} {latexEscape(window)} {latexTextSC('ema')}"
+    ewm[label] = sr.ewm(
         halflife=pd.Timedelta(window),
         times=sr.index,  # type: ignore
         min_periods=10,
     ).mean()
+    del label
 macd = computeMACD(sr)
 rsi = computeRSI(srDaily, minObservations=10)
 bollinger, stdDev = computeBollingerBands(srDaily)
@@ -1427,16 +1447,28 @@ targetTrades, _ = findMACDOptimumReturnIntervals(sr)
 
 display(targetTrades)
 
-macd.name = latexTextSC("macd") + latexEscape(
-    macd.name.removeprefix(f"{sr.name} MACD")  # type: ignore
+labelMap[macd.name] = (
+    labelMap[sr.name]
+    + " "
+    + latexTextSC("macd")
+    + latexEscape(macd.name.removeprefix(f"{sr.name} MACD"))  # type: ignore
 )
-rsi.name = latexTextSC("rsi") + latexEscape(
-    rsi.name.removeprefix(f"{sr.name} RSI")  # type: ignore
+labelMap[rsi.name] = (
+    labelMap[srDaily.name]
+    + " "
+    + latexTextSC("rsi")
+    + latexEscape(rsi.name.removeprefix(f"{srDaily.name} RSI"))  # type: ignore
 )
-bollinger.columns = [col.removeprefix(f"{sr.name} ") for col in bollinger.columns]
-stdDev.name = latexEscape(stdDev.name.removeprefix(f"{sr.name} "))  # type: ignore
-sr.name = latexTextSC(latexEscape(ticker.lower()))
-srDaily.name = sr.name
+for col in bollinger.columns:
+    labelMap[col] = (
+        labelMap[srDaily.name] + " " + latexEscape(col.removeprefix(f"{srDaily.name} "))
+    )
+labelMap[stdDev.name] = (
+    labelMap[srDaily.name]
+    + " "
+    + latexEscape(stdDev.name.removeprefix(f"{srDaily.name} "))  # type: ignore
+)
+applyLabelMap(labelMap, [sr, srDaily, ewm, macd, rsi, bollinger, stdDev])
 for yr in [2021, 2022, 2023]:
     plotInterval = pd.Interval(
         pd.Timestamp(yr, 1, 1), pd.Timestamp(yr + 1, 1, 1), closed="left"
@@ -1463,6 +1495,10 @@ for yr in [2021, 2022, 2023]:
     fig.axes[2].axhline(y=20, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
     fig.axes[2].axhline(y=80, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
     del yr, plotInterval
+applyLabelMap(
+    {v: k for k, v in labelMap.items()},
+    [sr, srDaily, ewm, macd, rsi, bollinger, stdDev],
+)
 
 
 def getDirection(t) -> int:
@@ -1515,6 +1551,8 @@ clf.fit(*infData["train"])
 display(clf.best_params_)
 
 # %%
+labelMapWOTicker = {k: v.removeprefix(labelMap[ticker] + " ") for k, v in labelMap.items()}
+applyLabelMap(labelMapWOTicker, [ewm, macd, bollinger])
 for label, (X, y) in infData.items():
     yPred = pd.Series(data=clf.predict(X), index=X.index)  # type: ignore
     fig = plotTimeseries(
@@ -1528,7 +1566,7 @@ for label, (X, y) in infData.items():
         [bollinger],
         plotInterval=pd.Interval(X.index.min(), X.index.max()),
         figsize=(14, 10.5),  # (8, 4.8),
-        title=f"{latexTextSC(latexEscape(ticker.lower()))} ({label})",
+        title=f"{labelMap[ticker]} ({label})",
         ylabels=[
             latexEscape("Price / $"),
             latexTextSC("macd") + latexEscape(" / $"),
@@ -1548,6 +1586,8 @@ for label, (X, y) in infData.items():
     axes[0].annotate("(predicted intervals)", (0.1, 0.9), xycoords="axes fraction")
     axes[0].annotate("(target intervals)", (0.1, 0.1), xycoords="axes fraction")
     del label, X, y, yPred, axes
+applyLabelMap({v: k for k, v in labelMapWOTicker.items()}, [ewm, macd, bollinger])
+del labelMapWOTicker
 
 # %%
 import sklearn.metrics
