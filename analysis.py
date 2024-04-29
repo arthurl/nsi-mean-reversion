@@ -31,6 +31,7 @@ import itertools
 import functools
 import sortedcontainers
 import matplotlib
+import matplotlib.dates
 import matplotlib.figure
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -319,7 +320,7 @@ def plotTimeseries(
     dataSets: Collection[
         pd.Series | pd.DataFrame
     ],  # first element uses the left y-axis, the others will use the right
-    intervalSets: Collection[pd.arrays.IntervalArray] = [],
+    intervalSets: Collection[Iterable[pd.Interval]] = [],
     bands: Collection[pd.DataFrame] = [],
     /,
     *,
@@ -493,7 +494,7 @@ def plotIntraday(
         axes = [axes]
     if ncols == 1:
         axes = [[ax] for ax in axes]
-    dtfmt = matplotlib.dates.DateFormatter("%H:%M")  # type: ignore
+    dtfmt = matplotlib.dates.DateFormatter("%H:%M")
     for datesRow, axesRow in zip(batched(dates, ncols), axes, strict=True):
         for dt, ax in zip(datesRow, axesRow, strict=False):
             # x_compat needed for set_major_formatter see https://stackoverflow.com/a/70625107
@@ -738,7 +739,7 @@ def parseDateTime(
             parsedDates = pd.to_datetime(dts, dayfirst=dayfirst, yearfirst=False)
         except ValueError:
             parsedDates = None
-        return parsedDates  # type: ignore
+        return parsedDates
 
     # some files (e.g. PEL) have mixed date separators
     dateStrsClean = df[datecol].str.replace("/", "-")
@@ -779,7 +780,7 @@ def parseDateTime(
             "Ambiguous month" + (f": {debugMsg}" if debugMsg is not None else "")
         )
     # set month because some datasets (e.g. 5PAISA) have the wrong month
-    parsedDT = parsedDT.apply(lambda d: d.replace(month=month))  # type: ignore
+    parsedDT = parsedDT.apply(lambda d: d.replace(month=month))
     parsedDT.name = "time"
     return parsedDT
 
@@ -1082,7 +1083,6 @@ def fetchTickersResampledAtTimes(
         ]
         return sr
 
-    times = list(times)  # type: ignore
     fullTickerData = {}
     resampledList = []
     for ticker in tickers:
@@ -1237,7 +1237,7 @@ def findMaxReturnLongShortIntervals(
 optimumTrades = findMaxReturnLongShortIntervals(
     data[data.index.minute == 30]["close"],  # type:ignore
     maxInterval=pd.Timedelta(days=21),
-    queueSize=200,  # type: ignore
+    queueSize=200,
 )
 
 fig, ax = plt.subplots()
