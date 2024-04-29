@@ -31,6 +31,7 @@ import itertools
 import functools
 import sortedcontainers
 import matplotlib
+import matplotlib.figure
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
@@ -333,7 +334,7 @@ def plotTimeseries(
     bandLowerColSuffix="lower",
     bandColours: Iterable[str] = iter([]),
     bandKWArgs: dict | Iterable[dict] | NoneType = None,
-):
+) -> matplotlib.figure.Figure:
     defaultPlotKWArgs = {}
     defaultIntervalKWArgs = {"alpha": 0.2}
     defaultBandKWArgs = {"alpha": 0.1}
@@ -359,8 +360,9 @@ def plotTimeseries(
         else:
             raise ValueError(f"Cannot uniquely determine column from suffix {suffix}")
 
+    fig, ax = plt.subplots(figsize=figsize)
     if len(dataSets) == 0:
-        return None
+        return fig
     plotInterval = plotInterval or pd.Interval(
         left=pd.Timestamp(datetime.datetime.min),
         right=pd.Timestamp(datetime.datetime.max),
@@ -375,7 +377,6 @@ def plotTimeseries(
     bandColourIt = iter(bandColours)
     bandKWArgsList = resolveKWArgs(len(bands), bandKWArgs, defaultBandKWArgs)
 
-    fig, ax = plt.subplots(figsize=figsize)
     data: pd.DataFrame = next(dataSetIt := iter(dataSets))  # type: ignore
     cCounter = len(data.columns) if isinstance(data, pd.DataFrame) else 1
     colours = [f"C{i}" for i in range(cCounter)]
@@ -461,7 +462,7 @@ def plotIntraday(
     yLabelpadR: float | NoneType = None,
     plotKWArgsL: dict | NoneType = None,
     plotKWArgsR: dict | NoneType = None,
-):
+) -> matplotlib.figure.Figure:
     def renameDataframeOrSeries(data: pd.Series | pd.DataFrame, renameF: Callable):
         if isinstance(data, pd.DataFrame):
             data = data.rename(columns=renameF)
@@ -1395,8 +1396,8 @@ fig = plotTimeseries(
     ylabels=[latexEscape("Price / $"), latexTextSC("macd") + latexEscape(" / $")],
     intervalColours=["xkcd:green", "xkcd:pale red"],
 )
-fig.axes[1].axhline(y=0, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
-fig.savefig(  # type: ignore
+fig.axes[1].axhline(y=0, alpha=0.2, color="xkcd:grey", linestyle="--")
+fig.savefig(
     BASEDIR / f"M6 - {ticker} {plotInterval.left.year} trades.pdf", bbox_inches="tight"
 )
 del sr, sma, macdCen, optimumTrades
@@ -1492,8 +1493,8 @@ for yr in [2021, 2022, 2023]:
         intervalColours=["xkcd:green", "xkcd:pale red"],
         bandColours=["C0"],
     )
-    fig.axes[2].axhline(y=20, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
-    fig.axes[2].axhline(y=80, alpha=0.2, color="xkcd:grey", linestyle="--")  # type: ignore
+    fig.axes[2].axhline(y=20, alpha=0.2, color="xkcd:grey", linestyle="--")
+    fig.axes[2].axhline(y=80, alpha=0.2, color="xkcd:grey", linestyle="--")
     del yr, plotInterval
 applyLabelMap(
     {v: k for k, v in labelMap.items()},
@@ -1581,11 +1582,10 @@ for label, (X, y) in infData.items():
         ],
         bandColours=["C0"],
     )
-    axes: list = fig.axes  # type: ignore
-    axes[1].axhline(y=0, alpha=0.2, color="xkcd:grey", linestyle="--")
-    axes[0].annotate("(predicted intervals)", (0.1, 0.9), xycoords="axes fraction")
-    axes[0].annotate("(target intervals)", (0.1, 0.1), xycoords="axes fraction")
-    del label, X, y, yPred, axes
+    fig.axes[1].axhline(y=0, alpha=0.2, color="xkcd:grey", linestyle="--")
+    fig.axes[0].annotate("(predicted intervals)", (0.1, 0.9), xycoords="axes fraction")
+    fig.axes[0].annotate("(target intervals)", (0.1, 0.1), xycoords="axes fraction")
+    del label, X, y, yPred
 applyLabelMap({v: k for k, v in labelMapWOTicker.items()}, [ewm, macd, bollinger])
 del labelMapWOTicker
 
