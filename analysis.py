@@ -1476,24 +1476,20 @@ for window in ["24h", "30D"]:
     ).mean()
     del label
 macd = computeMACD(sr)
-rsi = computeRSI(srDaily, minObservations=10)
-bollinger, stdDev = computeBollingerBands(srDaily)
-targetTrades, _ = findMACDOptimumReturnIntervals(sr)
-
-display(targetTrades)
-
 labelMap[macd.name] = (
     labelMap[sr.name]
     + " "
     + latexTextSC("macd")
     + latexEscape(macd.name.removeprefix(f"{sr.name} MACD"))  # type: ignore
 )
+rsi = computeRSI(srDaily, minObservations=10)
 labelMap[rsi.name] = (
     labelMap[srDaily.name]
     + " "
     + latexTextSC("rsi")
     + latexEscape(rsi.name.removeprefix(f"{srDaily.name} RSI"))  # type: ignore
 )
+bollinger, stdDev = computeBollingerBands(srDaily)
 for col in bollinger.columns:
     labelMap[col] = (
         labelMap[srDaily.name] + " " + latexEscape(col.removeprefix(f"{srDaily.name} "))
@@ -1503,6 +1499,10 @@ labelMap[stdDev.name] = (
     + " "
     + latexEscape(stdDev.name.removeprefix(f"{srDaily.name} "))  # type: ignore
 )
+targetTrades, _ = findMACDOptimumReturnIntervals(sr)
+
+display(targetTrades)
+
 applyLabelMap(labelMap, [sr, srDaily, ewm, macd, rsi, bollinger, stdDev])
 for yr in [2021, 2022, 2023]:
     plotInterval = pd.Interval(
