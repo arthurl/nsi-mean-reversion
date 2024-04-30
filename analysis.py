@@ -440,7 +440,14 @@ def plotTimeseries(
         upperBand = band[colFromSuffix(band, bandUpperColSuffix)]
         ax.fill_between(band.index, lowerBand, upperBand, color=colour, **kwArgs)
 
-    ax.legend(handles=[ln for ax in fig.axes for ln in ax.get_lines()])
+    ax.legend(
+        handles=[
+            ln
+            for ax in fig.axes
+            for ln in ax.get_lines()
+            if not ln.get_label().startswith("_")  # type: ignore
+        ]
+    )
     return fig
 
 
