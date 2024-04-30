@@ -23,7 +23,15 @@
 # %%
 from IPython.core.display_functions import display
 from types import NoneType
-from collections.abc import Callable, Iterable, Iterator, Collection
+from typing import Any
+from collections.abc import (
+    Callable,
+    Iterable,
+    Iterator,
+    Collection,
+    Mapping,
+    MutableMapping,
+)
 from collections import namedtuple
 import datetime
 from pathlib import Path
@@ -140,6 +148,31 @@ def applyLabelMap(
             s.columns = [labelMap[col] for col in s.columns]
 
 
+def computeMultiple(
+    f: Callable[..., pd.Series],
+    *args,
+    multipleArgs: Iterable[
+        Iterable | Mapping[str, Any] | tuple[Iterable, Mapping[str, Any]]
+    ] = [],
+    prettyLabelMap: MutableMapping[str, str] | NoneType = None,
+    **kwargs,
+):
+    results = []
+    for mArg in multipleArgs:
+        if isinstance(mArg, tuple):
+            margs, mkwargs = mArg
+        elif isinstance(mArg, Mapping):
+            margs, mkwargs = [], mArg
+        else:
+            margs, mkwargs = mArg, {}
+        results.append(
+            f(*args, *margs, **kwargs, **mkwargs, prettyLabelMap=prettyLabelMap)
+        )
+    if not results:
+        return pd.DataFrame()
+    return results[0].to_frame().join(results[1:], how="outer")
+
+
 # %% [markdown]
 # Helper functions for time series processing.
 
@@ -149,6 +182,13 @@ def timeseriesAtTimes(
     ts: pd.Series | pd.DataFrame, dts: Iterable[datetime.time] | Iterable[str]
 ):
     return pd.concat(ts.at_time(t) for t in dts).sort_index()
+
+
+def timeseriesAsOfTimestamps(ts: pd.Series, dts: pd.DatetimeIndex) -> pd.Series:
+    tsAsOf = ts.reindex(index=dts)
+    naMask = tsAsOf.isna()
+    tsAsOf.loc[naMask] = [ts.asof(t) for t in tsAsOf[naMask].index]
+    return tsAsOf
 
 
 def timeseriesByDay(ts: pd.Series | pd.DataFrame, dt: datetime.date):
@@ -260,6 +300,27 @@ def logReturnInv(
     return logRetInv
 
 
+def computeEWM(
+    sr: pd.Series,
+    /,
+    *,
+    window: str | pd.Timedelta,
+    prettyLabelMap: MutableMapping[str, str] | NoneType = None,
+    minPeriods: int = 0,
+) -> pd.Series:
+    ewm = sr.ewm(
+        halflife=window,
+        times=sr.index,  # type: ignore
+        min_periods=minPeriods,
+    ).mean()
+    ewm.name = f"{sr.name} EWM({window})"
+    if prettyLabelMap is not None and sr.name in prettyLabelMap:
+        prettyLabelMap[
+            ewm.name
+        ] = f"{prettyLabelMap[str(sr.name)]} {latexTextSC('ewm')}({window})"
+    return ewm
+
+
 def computeMACD(
     sr: pd.Series,
     /,
@@ -268,7 +329,8 @@ def computeMACD(
     long="26D",
     ave="9D",
     center: bool | tuple[bool, bool, bool] = False,
-):
+    prettyLabelMap: MutableMapping[str, str] | NoneType = None,
+) -> pd.Series:
     CMARK = "[c]"
 
     def ma(window, sr: pd.Series, center: bool) -> pd.Series:
@@ -278,27 +340,48 @@ def computeMACD(
         (center, center, center) if isinstance(center, bool) else center
     )
     macd = ma(ave, ma(short, sr, cenShort) - ma(long, sr, cenLong), cenAve)
-    macd.name = f"{sr.name} MACD({short}{CMARK if cenShort else ''}, {long}{CMARK if cenLong else ''}, {ave}{CMARK if cenAve else ''})"
+    macdParamsStr = f"{short}{CMARK if cenShort else ''}, {long}{CMARK if cenLong else ''}, {ave}{CMARK if cenAve else ''}"
+    macd.name = f"{sr.name} MACD({macdParamsStr})"
+    if prettyLabelMap is not None and sr.name in prettyLabelMap:
+        prettyLabelMap[
+            macd.name
+        ] = f"{prettyLabelMap[str(sr.name)]} {latexTextSC('macd')}({latexEscape(macdParamsStr)})"
     return macd
 
 
-def computeRSI(sr: pd.Series, /, *, period: int | float = 14, minObservations=0):
+def computeRSI(
+    sr: pd.Series,
+    /,
+    *,
+    period: int | float = 14,
+    minPeriods=0,
+    prettyLabelMap: MutableMapping[str, str] | NoneType = None,
+) -> pd.Series:
     halflife = pd.Timedelta(days=-1 / np.log2(1 - 1 / period))
     delta = sr.diff()
     ewmParams = {
         "halflife": halflife,
         "times": delta.index,
-        "min_periods": minObservations,
+        "min_periods": minPeriods,
     }
     gain = delta.clip(lower=0).ewm(**ewmParams).mean()  # type: ignore
     loss = (-delta).clip(lower=0).ewm(**ewmParams).mean()  # type: ignore
     rsi = 100 - (100 / (1 + gain / loss))
     rsi.name = f"{sr.name} RSI({period}D)"
+    if prettyLabelMap is not None and sr.name in prettyLabelMap:
+        prettyLabelMap[
+            rsi.name
+        ] = f"{prettyLabelMap[str(sr.name)]} {latexTextSC('rsi')}({period}D)"
     return rsi
 
 
 def computeBollingerBands(
-    sr: pd.Series, /, *, period="20D", K: int | float = 2
+    sr: pd.Series,
+    /,
+    *,
+    period="20D",
+    K: int | float = 2,
+    prettyLabelMap: MutableMapping[str, str] | NoneType = None,
 ) -> tuple[pd.DataFrame, pd.Series]:
     movingWin = sr.rolling(window=period, center=False)
     sma = movingWin.mean()
@@ -306,8 +389,19 @@ def computeBollingerBands(
     stdDev.name = f"{sr.name} StdDev({period})"
     kStdDev = K * stdDev
     bollinger = pd.DataFrame()
-    bollinger[f"{sr.name} Bollinger({period}, {K}) upper"] = sma + kStdDev
-    bollinger[f"{sr.name} Bollinger({period}, {K}) lower"] = sma - kStdDev
+    bollingerParamsStr = f" Bollinger({period}, {K}) "
+    bollinger[upperName := str(sr.name) + bollingerParamsStr + "upper"] = sma + kStdDev
+    bollinger[lowerName := str(sr.name) + bollingerParamsStr + "lower"] = sma - kStdDev
+    if prettyLabelMap is not None and sr.name in prettyLabelMap:
+        prettyLabelMap[
+            stdDev.name
+        ] = f"{prettyLabelMap[str(sr.name)]} StdDev({latexEscape(period)})"
+        prettyLabelMap[upperName] = (
+            prettyLabelMap[str(sr.name)] + bollingerParamsStr + "upper"
+        )
+        prettyLabelMap[lowerName] = (
+            prettyLabelMap[str(sr.name)] + bollingerParamsStr + "lower"
+        )
     return bollinger, stdDev
 
 
@@ -1459,107 +1553,80 @@ display(resampledData[resampledData.isna().any(axis=1)])
 # %%
 InferenceData = namedtuple("InferenceData", ["X", "y"])
 
+
 # %%
-labelMap = {}
-sr = data["close"]
-sr.name = ticker
-labelMap[sr.name] = latexTextSC(latexEscape(ticker.lower()))
-srDaily = resampledData[ticker].at_time(datetime.time(10, 0))
-ewm = pd.DataFrame()
-for window in ["24h", "5D", "15D", "30D"]:
-    label = f"{ticker} EWM({window})"
-    labelMap[label] = f"{labelMap[sr.name]} {latexTextSC('ewm')}({latexEscape(window)})"
-    ewm[label] = sr.ewm(
-        halflife=pd.Timedelta(window),
-        times=sr.index,  # type: ignore
-        min_periods=10,
-    ).mean()
-    del window, label
-ewm[label := f"{ticker} EWM(15D)/EWM(5D)"] = (
-    ewm[f"{ticker} EWM(15D)"] / ewm[f"{ticker} EWM(5D)"]
-)
-labelMap[
-    label
-] = f"{labelMap[sr.name]} {latexTextSC('ewm')}(15D)/{latexTextSC('ewm')}(5D)"
-del label
-macd = (
-    computeMACD(sr)
-    .to_frame()
-    .join([computeMACD(sr, short="24D", long="52D", ave="18D")])
-)
-for col in macd.columns:
-    labelMap[col] = (
-        labelMap[sr.name]
-        + " "
-        + latexTextSC("macd")
-        + latexEscape(col.removeprefix(f"{sr.name} MACD"))  # type: ignore
+def constructEquityFeatures(
+    data: pd.DataFrame,
+    /,
+    *,
+    ticker: str,
+    tradingDays: pd.DatetimeIndex,
+    priceCol="close",
+    volumeCol="volume",
+    prettyLabelMap: MutableMapping[str, str] | NoneType = None,
+) -> pd.DataFrame:
+    sr = data[priceCol]
+    sr.name = ticker
+    if prettyLabelMap is not None:
+        prettyLabelMap[sr.name] = latexTextSC(latexEscape(ticker.lower()))
+    srDaily = timeseriesAsOfTimestamps(sr, tradingDays)
+    ewm = computeMultiple(
+        computeEWM,
+        sr,
+        minPeriods=10,
+        multipleArgs=[{"window": w} for w in ["24h", "5D", "15D", "30D", "60D"]],
+        prettyLabelMap=prettyLabelMap,
     )
-rsi14 = computeRSI(srDaily, period=14, minObservations=10)
-rsi5 = computeRSI(srDaily, period=5, minObservations=10)
-rsi = rsi14.to_frame().join([rsi5])
-for col in rsi.columns:
-    labelMap[col] = (
-        labelMap[srDaily.name]
-        + " "
-        + latexTextSC("rsi")
-        + latexEscape(col.removeprefix(f"{srDaily.name} RSI"))  # type: ignore
+    ewm[label := f"{sr.name} EWM(15D)/EWM(5D)"] = (
+        ewm[f"{sr.name} EWM(15D)"] / ewm[f"{sr.name} EWM(5D)"]
     )
-rsi14over5 = rsi14 / rsi5
-rsi14over5.name = f"{ticker} RSI(14D)/RSI(5D)"
-labelMap[
-    rsi14over5.name
-] = f"{labelMap[srDaily.name]} {latexTextSC('rsi')}(14D)/{latexTextSC('rsi')}(5D)"
-rsi = rsi.join([rsi14over5])
-del rsi14, rsi5, rsi14over5
-bollinger, stdDev = computeBollingerBands(srDaily)
-for col in bollinger.columns:
-    labelMap[col] = (
-        labelMap[srDaily.name] + " " + latexEscape(col.removeprefix(f"{srDaily.name} "))
+    if prettyLabelMap is not None:
+        prettyLabelMap[
+            label
+        ] = f"{prettyLabelMap[sr.name]} {latexTextSC('ewm')}(15D)/{latexTextSC('ewm')}(5D)"
+    del label
+    macd = computeMultiple(
+        computeMACD,
+        sr,
+        multipleArgs=[{}, {"short": "24D", "long": "52D", "ave": "18D"}],
+        prettyLabelMap=prettyLabelMap,
     )
-labelMap[stdDev.name] = (
-    labelMap[srDaily.name]
-    + " "
-    + latexEscape(stdDev.name.removeprefix(f"{srDaily.name} "))  # type: ignore
+    rsi = computeMultiple(
+        computeRSI,
+        srDaily,
+        minPeriods=10,
+        multipleArgs=[{"period": w} for w in [14, 5]],
+        prettyLabelMap=prettyLabelMap,
+    )
+    rsi[label := f"{sr.name} RSI(14D)/RSI(5D)"] = (
+        rsi[f"{sr.name} RSI(14D)"] / rsi[f"{sr.name} RSI(5D)"]
+    )
+    if prettyLabelMap is not None:
+        prettyLabelMap[
+            label
+        ] = f"{prettyLabelMap[srDaily.name]} {latexTextSC('rsi')}(14D)/{latexTextSC('rsi')}(5D)"
+    del label
+    bollinger, stdDev = computeBollingerBands(srDaily, prettyLabelMap=prettyLabelMap)
+    # TODO: add volume and dollar volume features
+    rescaledFeatures = (
+        stdDev.to_frame()
+        .join([ewm, macd, srDaily.shift(range(1, 22))], how="left", sort=True)  # type: ignore
+        .dropna()
+        .div(srDaily, axis="index")
+    )
+    X = rescaledFeatures.join([rsi], how="left", sort=True).dropna()
+    return X
+
+
+# %%
+prettyLabelMap = {}
+tradingDays: pd.DatetimeIndex = resampledData.at_time(datetime.time(10, 0)).index  # type: ignore
+X = constructEquityFeatures(
+    data, ticker=ticker, tradingDays=tradingDays, prettyLabelMap=prettyLabelMap
 )
-targetTrades, _ = findMACDOptimumReturnIntervals(sr)
+targetTrades, _ = findMACDOptimumReturnIntervals(data["close"])
 
 display(targetTrades)
-
-applyLabelMap(labelMap, [sr, srDaily, ewm, macd, rsi, bollinger, stdDev])
-for yr in [2021, 2022, 2023]:
-    plotInterval = pd.Interval(
-        pd.Timestamp(yr, 1, 1), pd.Timestamp(yr + 1, 1, 1), closed="left"
-    )
-    fig = plotTimeseries(
-        [
-            ewm[[labelMap[f"{ticker} EWM({window})"] for window in ("24h", "30D")]],
-            macd[labelMap[f"{ticker} MACD(24D, 52D, 18D)"]],
-            rsi[labelMap[f"{ticker} RSI(14D)"]],
-        ],
-        [
-            targetTrades[targetTrades["direction"] > 0]["time interval"],
-            targetTrades[targetTrades["direction"] < 0]["time interval"],
-        ],  # type: ignore
-        [bollinger],
-        plotInterval=plotInterval,
-        figsize=(14, 10.5),  # (8, 4.8),
-        title=f"{sr.name} {plotInterval.left.year}",
-        ylabels=[
-            latexEscape("Price / $"),
-            latexTextSC("macd") + latexEscape(" / $"),
-            latexTextSC("rsi"),
-        ],
-        plotKWArgs={"alpha": 0.8},
-        intervalColours=["xkcd:green", "xkcd:pale red"],
-        bandColours=["C0"],
-    )
-    fig.axes[2].axhline(y=20, alpha=0.2, color="xkcd:grey", linestyle="--")
-    fig.axes[2].axhline(y=80, alpha=0.2, color="xkcd:grey", linestyle="--")
-    del yr, plotInterval
-applyLabelMap(
-    {v: k for k, v in labelMap.items()},
-    [sr, srDaily, ewm, macd, rsi, bollinger, stdDev],
-)
 
 
 def getDirection(t) -> int:
@@ -1571,13 +1638,6 @@ def getDirection(t) -> int:
     return 0
 
 
-rescaledFeatures = (
-    stdDev.to_frame()
-    .join([ewm, macd, srDaily.shift(range(1, 22))], how="left", sort=True)  # type: ignore
-    .dropna()
-    .div(srDaily, axis="index")
-)
-X = rescaledFeatures.join([rsi], how="left", sort=True).dropna()
 y = pd.Series(data=X.index.map(getDirection), index=X.index)
 XTrain, XTest, yTrain, yTest = sklearn.model_selection.train_test_split(
     X, y, test_size=0.2, shuffle=False
@@ -1587,8 +1647,8 @@ infData = {
     k: InferenceData(*sklearn.utils.shuffle(*v, random_state=RANDSEED))
     for k, v in infData.items()
 }
-del rescaledFeatures, X, y, XTrain, XTest, yTrain, yTest
-del sr, srDaily, rsi, stdDev, _
+del getDirection, X, y, XTrain, XTest, yTrain, yTest
+del _
 
 # %%
 from sklearn.preprocessing import StandardScaler
@@ -1612,14 +1672,22 @@ clf.fit(*infData["train"])
 display(clf.best_params_)
 
 # %%
-labelMapWOTicker = {
-    k: v.removeprefix(labelMap[ticker] + " ") for k, v in labelMap.items()
-}
+sr = data["close"]
+sr.name = ticker
+labelMap = {sr.name: latexTextSC(latexEscape(sr.name.lower()))}
 seriesPlots = [
-    ewm[[labelMapWOTicker[f"{ticker} EWM({window})"] for window in ("24h", "30D")]],
-    macd[labelMapWOTicker[f"{ticker} MACD(24D, 52D, 18D)"]],
+    computeMultiple(
+        computeEWM,
+        sr,
+        minPeriods=10,
+        multipleArgs=[{"window": w} for w in ["24h", "30D"]],
+        prettyLabelMap=labelMap,
+    ),
+    computeMACD(sr, short="24D", long="52D", ave="18D", prettyLabelMap=labelMap),
 ]
-applyLabelMap(labelMapWOTicker, [ewm, macd, bollinger])
+bollinger, _ = computeBollingerBands(sr.loc[tradingDays], prettyLabelMap=labelMap)
+labelMap = {k: v.removeprefix(labelMap[sr.name] + " ") for k, v in labelMap.items()}
+applyLabelMap(labelMap, seriesPlots + [bollinger])
 for label, (X, y) in infData.items():
     yPred = pd.Series(data=clf.predict(X), index=X.index)  # type: ignore
     fig = plotTimeseries(
@@ -1652,8 +1720,7 @@ for label, (X, y) in infData.items():
     fig.axes[0].annotate("(predicted intervals)", (0.1, 0.9), xycoords="axes fraction")
     fig.axes[0].annotate("(target intervals)", (0.1, 0.1), xycoords="axes fraction")
     del label, X, y, yPred
-applyLabelMap({v: k for k, v in labelMapWOTicker.items()}, [ewm, macd, bollinger])
-del labelMapWOTicker, seriesPlots
+del sr, labelMap, seriesPlots, bollinger, _
 
 # %%
 import sklearn.metrics
