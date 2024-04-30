@@ -1168,6 +1168,33 @@ ax.set_xlabel("Time")
 ax.set_ylabel(latexEscape("Price / $"))
 print(data.shape)
 
+# %%
+labelMap = {}
+sr, srVol = data["close"], data["volume"]
+ewm = pd.DataFrame()
+for window in ["24h", "20D"]:
+    label = f"{window} EMA"
+    labelMap[label] = f"{latexEscape(window)} {latexTextSC('ema')}"
+    ewm[label] = sr.ewm(
+        halflife=pd.Timedelta(window),
+        times=sr.index,  # type: ignore
+    ).mean()
+    del window, label
+dollarVolSMA = (srVol * sr * 60 / 1e9).rolling(window="24h", center=True).mean()
+dollarVolSMA.name = "Hourly volume $"
+labelMap[dollarVolSMA.name] = latexEscape(dollarVolSMA.name)
+
+applyLabelMap(labelMap, [ewm, dollarVolSMA])
+fig = plotTimeseries(
+    [ewm, dollarVolSMA],
+    [[pd.Interval(pd.Timestamp(2022, 9, 30), pd.Timestamp(2022, 10, 20))]],
+    plotInterval=pd.Interval(pd.Timestamp(2022, 9, 10), pd.Timestamp(2022, 11, 1)),
+    ylabels=[latexEscape("Price / $"), f"Hourly volume / billion {latexTextSC('inr')}"],
+    intervalColours=["xkcd:green"],
+)
+del labelMap, sr, srVol, ewm, dollarVolSMA
+fig.savefig(BASEDIR / f"M6 - {ticker} mean reversion.pdf", bbox_inches="tight")
+
 
 # %%
 def findMaxReturnIntervals(
