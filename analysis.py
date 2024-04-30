@@ -1466,29 +1466,51 @@ sr.name = ticker
 labelMap[sr.name] = latexTextSC(latexEscape(ticker.lower()))
 srDaily = resampledData[ticker].at_time(datetime.time(10, 0))
 ewm = pd.DataFrame()
-for window in ["24h", "30D"]:
-    label = f"{ticker} {window} EMA"
-    labelMap[label] = f"{labelMap[sr.name]} {latexEscape(window)} {latexTextSC('ema')}"
+for window in ["24h", "5D", "15D", "30D"]:
+    label = f"{ticker} EWM({window})"
+    labelMap[label] = f"{labelMap[sr.name]} {latexTextSC('ewm')}({latexEscape(window)})"
     ewm[label] = sr.ewm(
         halflife=pd.Timedelta(window),
         times=sr.index,  # type: ignore
         min_periods=10,
     ).mean()
-    del label
-macd = computeMACD(sr)
-labelMap[macd.name] = (
-    labelMap[sr.name]
-    + " "
-    + latexTextSC("macd")
-    + latexEscape(macd.name.removeprefix(f"{sr.name} MACD"))  # type: ignore
+    del window, label
+ewm[label := f"{ticker} EWM(15D)/EWM(5D)"] = (
+    ewm[f"{ticker} EWM(15D)"] / ewm[f"{ticker} EWM(5D)"]
 )
-rsi = computeRSI(srDaily, minObservations=10)
-labelMap[rsi.name] = (
-    labelMap[srDaily.name]
-    + " "
-    + latexTextSC("rsi")
-    + latexEscape(rsi.name.removeprefix(f"{srDaily.name} RSI"))  # type: ignore
+labelMap[
+    label
+] = f"{labelMap[sr.name]} {latexTextSC('ewm')}(15D)/{latexTextSC('ewm')}(5D)"
+del label
+macd = (
+    computeMACD(sr)
+    .to_frame()
+    .join([computeMACD(sr, short="24D", long="52D", ave="18D")])
 )
+for col in macd.columns:
+    labelMap[col] = (
+        labelMap[sr.name]
+        + " "
+        + latexTextSC("macd")
+        + latexEscape(col.removeprefix(f"{sr.name} MACD"))  # type: ignore
+    )
+rsi14 = computeRSI(srDaily, period=14, minObservations=10)
+rsi5 = computeRSI(srDaily, period=5, minObservations=10)
+rsi = rsi14.to_frame().join([rsi5])
+for col in rsi.columns:
+    labelMap[col] = (
+        labelMap[srDaily.name]
+        + " "
+        + latexTextSC("rsi")
+        + latexEscape(col.removeprefix(f"{srDaily.name} RSI"))  # type: ignore
+    )
+rsi14over5 = rsi14 / rsi5
+rsi14over5.name = f"{ticker} RSI(14D)/RSI(5D)"
+labelMap[
+    rsi14over5.name
+] = f"{labelMap[srDaily.name]} {latexTextSC('rsi')}(14D)/{latexTextSC('rsi')}(5D)"
+rsi = rsi.join([rsi14over5])
+del rsi14, rsi5, rsi14over5
 bollinger, stdDev = computeBollingerBands(srDaily)
 for col in bollinger.columns:
     labelMap[col] = (
@@ -1509,7 +1531,11 @@ for yr in [2021, 2022, 2023]:
         pd.Timestamp(yr, 1, 1), pd.Timestamp(yr + 1, 1, 1), closed="left"
     )
     fig = plotTimeseries(
-        [ewm, macd, rsi],
+        [
+            ewm[[labelMap[f"{ticker} EWM({window})"] for window in ("24h", "30D")]],
+            macd[labelMap[f"{ticker} MACD(24D, 52D, 18D)"]],
+            rsi[labelMap[f"{ticker} RSI(14D)"]],
+        ],
         [
             targetTrades[targetTrades["direction"] > 0]["time interval"],
             targetTrades[targetTrades["direction"] < 0]["time interval"],
@@ -1586,12 +1612,18 @@ clf.fit(*infData["train"])
 display(clf.best_params_)
 
 # %%
-labelMapWOTicker = {k: v.removeprefix(labelMap[ticker] + " ") for k, v in labelMap.items()}
+labelMapWOTicker = {
+    k: v.removeprefix(labelMap[ticker] + " ") for k, v in labelMap.items()
+}
+seriesPlots = [
+    ewm[[labelMapWOTicker[f"{ticker} EWM({window})"] for window in ("24h", "30D")]],
+    macd[labelMapWOTicker[f"{ticker} MACD(24D, 52D, 18D)"]],
+]
 applyLabelMap(labelMapWOTicker, [ewm, macd, bollinger])
 for label, (X, y) in infData.items():
     yPred = pd.Series(data=clf.predict(X), index=X.index)  # type: ignore
     fig = plotTimeseries(
-        [ewm, macd],
+        seriesPlots,
         [
             targetTrades[targetTrades["direction"] > 0]["time interval"],  # type: ignore
             targetTrades[targetTrades["direction"] < 0]["time interval"],  # type: ignore
@@ -1621,7 +1653,7 @@ for label, (X, y) in infData.items():
     fig.axes[0].annotate("(target intervals)", (0.1, 0.1), xycoords="axes fraction")
     del label, X, y, yPred
 applyLabelMap({v: k for k, v in labelMapWOTicker.items()}, [ewm, macd, bollinger])
-del labelMapWOTicker
+del labelMapWOTicker, seriesPlots
 
 # %%
 import sklearn.metrics
