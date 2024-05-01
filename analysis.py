@@ -1619,61 +1619,87 @@ def constructEquityFeatures(
 
 
 # %%
+# %%time
+TESTSIZE = 0.333
 prettyLabelMap = {}
 tradingDays: pd.DatetimeIndex = resampledData.at_time(datetime.time(10, 0)).index  # type: ignore
-X = constructEquityFeatures(
-    data, ticker=ticker, tradingDays=tradingDays, prettyLabelMap=prettyLabelMap
-)
-targetTrades, _ = findMACDOptimumReturnIntervals(data["close"])
+infData = {}
+targetTrades = {}
+for ticker in ["SUNPHARMA", "BHARTIARTL", "CANBK", "TITAN"]:
+    data = fetchTicker(ticker)
+    X = constructEquityFeatures(
+        data, ticker=ticker, tradingDays=tradingDays, prettyLabelMap=prettyLabelMap
+    )
+    targets, _ = findMACDOptimumReturnIntervals(data["close"])
 
-display(targetTrades)
+    def getDirection(t) -> int:
+        for interval, direction in targets[["time interval", "direction"]].itertuples(
+            index=False
+        ):
+            if t in interval:
+                return direction
+        return 0
 
-
-def getDirection(t) -> int:
-    for interval, direction in targetTrades[["time interval", "direction"]].itertuples(
-        index=False
-    ):
-        if t in interval:
-            return direction
-    return 0
-
-
-y = pd.Series(data=X.index.map(getDirection), index=X.index)
-XTrain, XTest, yTrain, yTest = sklearn.model_selection.train_test_split(
-    X, y, test_size=0.2, shuffle=False
-)
-infData = {"train": InferenceData(XTrain, yTrain), "test": InferenceData(XTest, yTest)}
-infData = {
-    k: InferenceData(*sklearn.utils.shuffle(*v, random_state=RANDSEED))
-    for k, v in infData.items()
-}
-del getDirection, X, y, XTrain, XTest, yTrain, yTest
-del _
+    y = pd.Series(data=X.index.map(getDirection), index=X.index)
+    XTrain, XTest, yTrain, yTest = sklearn.model_selection.train_test_split(
+        X, y, test_size=TESTSIZE, shuffle=False
+    )
+    infData[ticker] = {
+        "train": InferenceData(XTrain, yTrain),
+        "test": InferenceData(XTest, yTest),
+    }
+    infData[ticker] = {
+        k: InferenceData(*sklearn.utils.shuffle(*v, random_state=RANDSEED))
+        for k, v in infData[ticker].items()
+    }
+    targetTrades[ticker] = targets
+    del getDirection, targets, X, y, XTrain, XTest, yTrain, yTest
+    del _
 
 # %%
+# %%time
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
-balanceInvested = {0: sum(infData["train"].y != 0) / len(infData["train"].y)}
+XTrain, yTrain = [], []
+scalers = {}
+investedCount, totalCount = 0, 0
+for ticker, infDataTicker in infData.items():
+    X, y = infDataTicker["train"]
+    scalers[ticker] = StandardScaler().fit(X)
+    XTrain.append(scalers[ticker].transform(X))
+    yTrain.append(y)
+    investedCount += sum(y != 0)
+    totalCount += len(y)
+    del ticker, infDataTicker, X, y
+XTrain = np.concatenate(XTrain, axis=0)
+yTrain = np.concatenate(yTrain, axis=0)
+balanceInvested = {0: investedCount / totalCount}
 balanceInvested[1] = (1 - balanceInvested[0]) / 2
 balanceInvested[-1] = balanceInvested[1]
+del investedCount, totalCount
 paramSpace = {
-    "svc__C": [10**i for i in range(-9, 9)],
-    "svc__kernel": ["rbf"],
-    "svc__class_weight": ["balanced", balanceInvested],
+    "C": [10**i for i in range(-5, 5)],
+    "kernel": ["rbf"],
+    "class_weight": ["balanced", balanceInvested],
 }
-pipe = sklearn.pipeline.make_pipeline(
-    StandardScaler(),
-    SVC(probability=True, break_ties=True, cache_size=SKLCACHE, random_state=RANDSEED),
+svc = SVC(
+    probability=False, break_ties=True, cache_size=SKLCACHE, random_state=RANDSEED
 )
-clf = sklearn.model_selection.GridSearchCV(pipe, paramSpace, n_jobs=-2, verbose=0)
-del balanceInvested, paramSpace, pipe
-clf.fit(*infData["train"])
+clf = sklearn.model_selection.GridSearchCV(
+    svc, paramSpace, scoring="balanced_accuracy", n_jobs=-2, verbose=0
+)
+del balanceInvested, paramSpace, svc
+clf.fit(XTrain, yTrain)
+del XTrain, yTrain
 display(clf.best_params_)
 
 # %%
+ticker = "SUNPHARMA"
+data = fetchTicker(ticker)
 sr = data["close"]
 sr.name = ticker
+srDaily = timeseriesAsOfTimestamps(sr, tradingDays)
 labelMap = {sr.name: latexTextSC(latexEscape(sr.name.lower()))}
 seriesPlots = [
     computeMultiple(
@@ -1685,16 +1711,17 @@ seriesPlots = [
     ),
     computeMACD(sr, short="24D", long="52D", ave="18D", prettyLabelMap=labelMap),
 ]
-bollinger, _ = computeBollingerBands(sr.loc[tradingDays], prettyLabelMap=labelMap)
+bollinger, _ = computeBollingerBands(srDaily, prettyLabelMap=labelMap)
 labelMap = {k: v.removeprefix(labelMap[sr.name] + " ") for k, v in labelMap.items()}
 applyLabelMap(labelMap, seriesPlots + [bollinger])
-for label, (X, y) in infData.items():
-    yPred = pd.Series(data=clf.predict(X), index=X.index)  # type: ignore
+target = targetTrades[ticker]
+for label, (X, y) in infData[ticker].items():
+    yPred = pd.Series(data=clf.predict(scalers[ticker].transform(X)), index=X.index)  # type: ignore
     fig = plotTimeseries(
         seriesPlots,
         [
-            targetTrades[targetTrades["direction"] > 0]["time interval"],  # type: ignore
-            targetTrades[targetTrades["direction"] < 0]["time interval"],  # type: ignore
+            target[target["direction"] > 0]["time interval"],  # type: ignore
+            target[target["direction"] < 0]["time interval"],  # type: ignore
             getIntervalsWhereTrue(yPred, key=lambda x: x > 0),
             getIntervalsWhereTrue(yPred, key=lambda x: x < 0),
         ],
@@ -1720,7 +1747,7 @@ for label, (X, y) in infData.items():
     fig.axes[0].annotate("(predicted intervals)", (0.1, 0.9), xycoords="axes fraction")
     fig.axes[0].annotate("(target intervals)", (0.1, 0.1), xycoords="axes fraction")
     del label, X, y, yPred
-del sr, labelMap, seriesPlots, bollinger, _
+del sr, srDaily, labelMap, seriesPlots, bollinger, _
 
 # %%
 import sklearn.metrics
