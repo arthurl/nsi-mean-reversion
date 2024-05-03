@@ -1426,7 +1426,7 @@ def findLargestIntervalsBefore0(
     maxInterval: pd.Timedelta,
     threshold=0.5,  # number between 0 and 1. 0 means no filtering.
     thresholdInterval: pd.Timedelta | NoneType = None,
-) -> pd.DataFrame:
+) -> pd.Series:
     if thresholdInterval is None:
         thresholdInterval = 10 * maxInterval
 
@@ -1459,32 +1459,30 @@ def findLargestIntervalsBefore0(
     intervals["time interval"] = pd.arrays.IntervalArray.from_arrays(
         intervals["time start"], intervals["time end"], closed="left"
     )
-    intervals = intervals[["time interval", "direction"]].sort_values(
-        by="time interval"
+    intervals = (
+        intervals[["time interval", "direction"]]
+        .set_index("time interval")
+        .sort_index()
     )
 
     if threshold > 0:
         srAbs = sr.abs()
         intervals = intervals.drop(
             intervals[
-                intervals["time interval"].array.left.map(srAbs)  # type: ignore
+                intervals.index.left.map(srAbs)  # type: ignore
                 / intervals.apply(
-                    lambda row: 1
-                    / srAbs[
-                        (
-                            row["time interval"].right - thresholdInterval / 2
-                            <= srAbs.index
-                        )
-                        & (
-                            srAbs.index
-                            < row["time interval"].right + thresholdInterval / 2
-                        )
+                    lambda row: srAbs[
+                        (row.name.right - thresholdInterval / 2 <= srAbs.index)
+                        & (srAbs.index < row.name.right + thresholdInterval / 2)
                     ].max(),
                     axis=1,
                 )
                 < threshold
             ].index
-        ).reset_index(drop=True)
+        )
+
+    intervals = intervals["direction"]
+    intervals.name = "direction"
     return intervals
 
 
@@ -1503,17 +1501,15 @@ def findMACDOptimumReturnIntervals(
     macd = computeMACD(price, **macdParams, center=macdCenter)
     optimumTrades = findLargestIntervalsBefore0(
         macd, maxInterval=maxInterval, threshold=thresholdMACD
-    )
-    optimumTrades["duration"] = optimumTrades[
-        "time interval"
-    ].array.length / pd.Timedelta(days=1)  # type: ignore
+    ).to_frame()
+    optimumTrades["duration"] = optimumTrades.index.length / pd.Timedelta(days=1)  # type: ignore
     optimumTrades["return"] = (
-        optimumTrades["time interval"].array.right.map(price)  # type: ignore
-        / optimumTrades["time interval"].array.left.map(price)  # type: ignore
+        optimumTrades.index.right.map(price)  # type: ignore
+        / optimumTrades.index.left.map(price)  # type: ignore
     ) ** optimumTrades["direction"] - 1
     optimumTrades = optimumTrades.drop(
         optimumTrades[optimumTrades["return"] <= thresholdReturn].index
-    ).reset_index(drop=True)
+    )
     return optimumTrades, macd
 
 
@@ -1537,8 +1533,8 @@ sr.name = latexTextSC(latexEscape(ticker.lower()))
 fig = plotTimeseries(
     [sma, macdCen],
     [
-        optimumTrades[optimumTrades["direction"] > 0]["time interval"],
-        optimumTrades[optimumTrades["direction"] < 0]["time interval"],
+        optimumTrades[optimumTrades["direction"] > 0].index,
+        optimumTrades[optimumTrades["direction"] < 0].index,
     ],  # type: ignore
     plotInterval=plotInterval,
     figsize=(8, 4.8),  # (14, 10.5)
@@ -1661,9 +1657,7 @@ for ticker in ["SUNPHARMA", "BHARTIARTL", "CANBK", "TITAN"]:
     targets, _ = findMACDOptimumReturnIntervals(data["close"])
 
     def getDirection(t) -> int:
-        for interval, direction in targets[["time interval", "direction"]].itertuples(
-            index=False
-        ):
+        for interval, direction in targets["direction"].items():
             if t in interval:
                 return direction
         return 0
@@ -1752,8 +1746,8 @@ for label, (X, y) in infData[ticker].items():
     fig = plotTimeseries(
         seriesPlots,
         [
-            target[target["direction"] > 0]["time interval"],  # type: ignore
-            target[target["direction"] < 0]["time interval"],  # type: ignore
+            target[target["direction"] > 0].index,  # type: ignore
+            target[target["direction"] < 0].index,  # type: ignore
             getIntervalsWhereTrue(yPred, key=lambda x: x > 0),
             getIntervalsWhereTrue(yPred, key=lambda x: x < 0),
         ],
