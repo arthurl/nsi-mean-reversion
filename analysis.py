@@ -1649,10 +1649,9 @@ def findMACDOptimumReturnIntervals(
         macd, maxInterval=maxInterval, threshold=thresholdMACD
     ).to_frame()
     optimumTrades["duration"] = optimumTrades.index.length / pd.Timedelta(days=1)  # type: ignore
-    optimumTrades["return"] = (
-        optimumTrades.index.right.map(price)  # type: ignore
-        / optimumTrades.index.left.map(price)  # type: ignore
-    ) ** optimumTrades["direction"] - 1
+    optimumTrades["return"] = optimumTrades["direction"] * (
+        optimumTrades.index.right.map(price) / optimumTrades.index.left.map(price) - 1  # type: ignore
+    )
     optimumTrades = optimumTrades.drop(
         optimumTrades[optimumTrades["return"] <= thresholdReturn].index
     )
