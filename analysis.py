@@ -1947,6 +1947,22 @@ clf = sklearn.model_selection.GridSearchCV(
 del balanceInvested, paramSpace, svc
 clf.fit(XTrain, yTrain)
 del XTrain, yTrain
+
+rankedScore = sorted(
+    enumerate(clf.cv_results_["mean_test_score"]), key=lambda x: (-x[1], x[0])
+)
+fig, ax = plt.subplots()
+ax.plot(
+    range(len(rankedScore)),
+    [score for idx, score in rankedScore],
+    linestyle="--",
+    marker="o",
+)
+for rank, (idx, score) in enumerate(rankedScore):
+    ax.annotate(idx, (rank, score), xytext=(0.2, 0.5), textcoords="offset fontsize")
+ax.set_xlabel("Rank")
+ax.set_ylabel("Mean score")
+del rankedScore
 display(clf.best_params_)
 
 # %%
