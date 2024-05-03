@@ -314,6 +314,8 @@ def computeEWM(
     prettyLabelMap: MutableMapping[str, str] | NoneType = None,
     minPeriods: int = 0,
 ) -> pd.Series:
+    if not isinstance(sr.index, pd.DatetimeIndex):
+        raise ValueError("sr must be a time series")
     ewm = sr.ewm(
         halflife=window,
         times=sr.index,  # type: ignore
@@ -373,6 +375,8 @@ def computeRSI(
     minPeriods=0,
     prettyLabelMap: MutableMapping[str, str] | NoneType = None,
 ) -> pd.Series:
+    if not isinstance(sr.index, pd.DatetimeIndex):
+        raise ValueError("sr must be a time series")
     halflife = pd.Timedelta(days=-1 / np.log2(1 - 1 / period))
     delta = sr.diff()
     ewmParams = {
