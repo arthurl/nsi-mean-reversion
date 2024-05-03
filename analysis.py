@@ -180,27 +180,141 @@ def computeMultiple(
 
 
 # %% [markdown]
-# Helper functions for time series processing.
+# Helper functions for Pandas intervals.
 
 
 # %%
-def timeseriesAtTimes(
-    ts: pd.Series | pd.DataFrame, dts: Iterable[datetime.time] | Iterable[str]
-):
-    return pd.concat(ts.at_time(t) for t in dts).sort_index()
+def closeStr(leftClosed: bool, rightClosed: bool) -> str:
+    if leftClosed:
+        return "both" if rightClosed else "left"
+    else:
+        return "right" if rightClosed else "neither"
 
 
-def timeseriesAsOfTimestamps(ts: pd.Series, dts: pd.DatetimeIndex) -> pd.Series:
-    tsAsOf = ts.reindex(index=dts)
-    naMask = tsAsOf.isna()
-    tsAsOf.loc[naMask] = [ts.asof(t) for t in tsAsOf[naMask].index]
-    return tsAsOf
+def largestIntervalLeft(intervals: Iterable[pd.Interval]) -> tuple:
+    interval = next(intIt := iter(intervals))
+    largest = interval.left
+    closed = interval.closed_left
+    for interval in intIt:
+        if interval.left > largest:
+            largest = interval.left
+            closed = interval.closed_left
+        elif interval.left == largest:
+            closed = closed and interval.closed_left
+    return (largest, closed)
 
 
-def timeseriesByDay(ts: pd.Series | pd.DataFrame, dt: datetime.date):
-    start = datetime.datetime.combine(dt, datetime.time())
-    end = start + datetime.timedelta(days=1)
-    return ts[(start <= ts.index) & (ts.index < end)]
+def smallestIntervalRight(intervals: Iterable[pd.Interval]) -> tuple:
+    interval = next(intIt := iter(intervals))
+    smallest = interval.right
+    closed = interval.closed_right
+    for interval in intIt:
+        if interval.right < smallest:
+            smallest = interval.right
+            closed = interval.closed_right
+        elif interval.right == smallest:
+            closed = closed and interval.closed_right
+    return (smallest, closed)
+
+
+def intervalIntersection(
+    aIntervals: Iterable[pd.Interval], bIntervals: Iterable[pd.Interval]
+) -> list[pd.Interval]:
+    intersections = []
+    aArr, bArr = sorted(aIntervals), sorted(bIntervals)
+    while aArr and bArr:
+        a = aArr.pop()
+        b = bArr.pop()
+        while aArr and a.overlaps(aArr[-1]):
+            other = aArr.pop()
+            a = pd.Interval(
+                left=other.left,
+                right=a.right,
+                closed=closeStr(other.closed_left, a.closed_right),  # type: ignore
+            )
+        while bArr and b.overlaps(bArr[-1]):
+            other = bArr.pop()
+            b = pd.Interval(
+                left=other.left,
+                right=b.right,
+                closed=closeStr(other.closed_left, b.closed_right),  # type: ignore
+            )
+        if a.overlaps(b):
+            lVal, lClosed = largestIntervalLeft([a, b])
+            rVal, rClosed = smallestIntervalRight([a, b])
+            intersections.append(
+                pd.Interval(left=lVal, right=rVal, closed=closeStr(lClosed, rClosed))  # type: ignore
+            )
+        if a < b:
+            aArr.append(a)
+        else:
+            bArr.append(b)
+    intersections.reverse()
+    return intersections
+
+
+def intervalDifference(
+    aIntervals: Iterable[pd.Interval], bIntervals: Iterable[pd.Interval]
+) -> list[pd.Interval]:
+    differences = []
+    aArr, bArr = sorted(aIntervals), sorted(bIntervals)
+    while aArr and bArr:
+        a = aArr.pop()
+        b = bArr.pop()
+        while aArr and a.overlaps(aArr[-1]):
+            other = aArr.pop()
+            a = pd.Interval(
+                left=other.left,
+                right=a.right,
+                closed=closeStr(other.closed_left, a.closed_right),  # type: ignore
+            )
+        while bArr and b.overlaps(bArr[-1]):
+            other = bArr.pop()
+            b = pd.Interval(
+                left=other.left,
+                right=b.right,
+                closed=closeStr(other.closed_left, b.closed_right),  # type: ignore
+            )
+        if b.right < a.right or (
+            a.right == b.right and a.closed_right and b.open_right
+        ):  # a is sticking out
+            if a.overlaps(b):
+                differences.append(
+                    pd.Interval(
+                        left=b.right,
+                        right=a.right,
+                        closed=closeStr(b.open_right, a.closed_right),  # type: ignore
+                    )
+                )
+                if a < b:
+                    aArr.append(
+                        pd.Interval(
+                            left=a.left,
+                            right=b.left,
+                            closed=closeStr(a.closed_left, b.open_left),  # type: ignore
+                        )
+                    )
+                elif a > b:
+                    bArr.append(b)
+            else:
+                differences.append(a)
+                bArr.append(b)
+        else:
+            if a.overlaps(b):
+                if a < b:
+                    aArr.append(
+                        pd.Interval(
+                            left=a.left,
+                            right=b.left,
+                            closed=closeStr(a.closed_left, b.open_left),  # type: ignore
+                        )
+                    )
+                else:
+                    bArr.append(b)
+            else:
+                aArr.append(a)
+    aArr.extend(reversed(differences))
+    return aArr
 
 
 def coalesceIntervals(intervals: Iterable[pd.Interval]) -> set[pd.Interval]:
@@ -223,11 +337,11 @@ def coalesceIntervals(intervals: Iterable[pd.Interval]) -> set[pd.Interval]:
         else:
             rightTime = intB.right
             rightClosed = intB.closed_right
-        if leftClosed:
-            closed = "both" if rightClosed else "left"
-        else:
-            closed = "right" if rightClosed else "neither"
-        return pd.Interval(leftTime, rightTime, closed=closed)
+        return pd.Interval(
+            left=leftTime,
+            right=rightTime,
+            closed=closeStr(leftClosed, rightClosed),  # type: ignore
+        )
 
     aggIntervals = set()
     for interval in intervals:
@@ -269,6 +383,34 @@ def getIntervalsWhereTrue(
         ]
     )
     return pd.arrays.IntervalArray(data=np.array(sorted(trueIntervals)), closed=closed)
+
+
+# %% [markdown]
+# Helper functions for time series processing.
+
+
+# %%
+def timeseriesAtTimes(
+    ts: pd.Series | pd.DataFrame, dts: Iterable[datetime.time] | Iterable[str]
+):
+    if not isinstance(ts.index, pd.DatetimeIndex):
+        raise ValueError("ts must be a time series")
+    return pd.concat(ts.at_time(t) for t in dts).sort_index()
+
+
+def timeseriesAsOfTimestamps(ts: pd.Series, dts: pd.DatetimeIndex) -> pd.Series:
+    if not isinstance(ts.index, pd.DatetimeIndex):
+        raise ValueError("ts must be a time series")
+    tsAsOf = ts.reindex(index=dts)
+    naMask = tsAsOf.isna()
+    tsAsOf.loc[naMask] = [ts.asof(t) for t in tsAsOf[naMask].index]
+    return tsAsOf
+
+
+def timeseriesByDay(ts: pd.Series | pd.DataFrame, dt: datetime.date):
+    start = datetime.datetime.combine(dt, datetime.time())
+    end = start + datetime.timedelta(days=1)
+    return ts[(start <= ts.index) & (ts.index < end)]
 
 
 def batched(iterable: Iterable, n: int) -> Iterator:
@@ -1644,6 +1786,92 @@ def constructEquityFeatures(
     )
     X = rescaledFeatures.join([rsi], how="left", sort=True).dropna()
     return X
+
+
+def relevantProfitCapturedPerTicker(
+    y: pd.Series,  # y is unused when targetIntervalsDirection is passed
+    yPred: pd.Series | np.ndarray,
+    /,
+    *,
+    targetIntervalsDirection: pd.Series | NoneType = None,
+    prices: pd.Series,
+) -> tuple[float, float]:
+    """Profits in the target interval are counted, losses inside and profits
+    outside the target period are zero-rated. Losses outside the target period
+    are penalised.
+    """
+    if targetIntervalsDirection is None:
+        raise NotImplementedError
+    if not (
+        isinstance(y.index, pd.IntervalIndex)
+        and isinstance(y.index[0].left, pd.Timestamp)  # type: ignore
+    ):
+        raise ValueError("y must be indexed by time intervals")
+    if isinstance(yPred, np.ndarray):
+        yPred = pd.Series(data=yPred, index=y.index)
+    if not (
+        isinstance(yPred.index, pd.IntervalIndex)
+        and isinstance(yPred.index[0].left, pd.Timestamp)  # type: ignore
+    ):
+        raise ValueError("yPred must be indexed by time intervals")
+    if not isinstance(prices.index, pd.DatetimeIndex):
+        raise ValueError("Prices must be a time series")
+    if len(targetIntervalsDirection) > 0 and not (
+        isinstance(targetIntervalsDirection.index, pd.IntervalIndex)
+        and isinstance(targetIntervalsDirection.index[0].left, pd.Timestamp)  # type: ignore
+    ):
+        raise ValueError("Target intervals must be indexed by time intervals")
+    prices = prices.sort_index()
+
+    targetIntervalTotalReturn = 1.0
+    for interval in intervalIntersection(y.index, targetIntervalsDirection.index):
+        candidateTargets = targetIntervalsDirection[
+            targetIntervalsDirection.index.contains(  # type: ignore
+                interval.left + pd.Timedelta(nanoseconds=1)  # type: ignore
+            )
+        ]
+        assert len(candidateTargets) == 1
+        targetInterval, direction = next(candidateTargets.items())  # type: ignore
+        assert interval.left in targetInterval or (
+            targetInterval.open_left and interval.left == targetInterval.left
+        )
+        assert interval.right in targetInterval or (
+            targetInterval.open_right and interval.right == targetInterval.right
+        )
+        del candidateTargets, targetInterval
+        gain: float = direction * (
+            prices.asof(interval.right) / prices.asof(interval.left) - 1  # type: ignore
+        )
+        targetIntervalTotalReturn *= max(0, gain) + 1
+    targetIntervalTotalReturn -= 1
+
+    predLongIntervals = coalesceIntervals(yPred[yPred > 0].index)
+    predShortIntervals = coalesceIntervals(yPred[yPred < 0].index)
+
+    relevantGains = 1.0
+    for interval in intervalIntersection(
+        predLongIntervals, targetIntervalsDirection[targetIntervalsDirection > 0].index
+    ):
+        gain = prices.asof(interval.right) / prices.asof(interval.left) - 1  # type: ignore
+        relevantGains *= max(0, gain) + 1
+    for interval in intervalIntersection(
+        predShortIntervals, targetIntervalsDirection[targetIntervalsDirection < 0].index
+    ):
+        gain = 1 - prices.asof(interval.right) / prices.asof(interval.left)  # type: ignore
+        relevantGains *= max(0, gain) + 1
+
+    nonTargetLosses = 1.0
+    for interval in intervalDifference(
+        predLongIntervals, targetIntervalsDirection[targetIntervalsDirection > 0].index
+    ):
+        loss = 1 - prices.asof(interval.right) / prices.asof(interval.left)  # type: ignore
+        nonTargetLosses *= 1 - max(0, loss)
+    for interval in intervalDifference(
+        predShortIntervals, targetIntervalsDirection[targetIntervalsDirection < 0].index
+    ):
+        loss = prices.asof(interval.right) / prices.asof(interval.left) - 1  # type: ignore
+        nonTargetLosses *= 1 - max(0, loss)
+    return relevantGains * nonTargetLosses - 1, targetIntervalTotalReturn
 
 
 # %%
