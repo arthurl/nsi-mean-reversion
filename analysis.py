@@ -139,9 +139,11 @@ async def concurrent_map_fold(
 
 # %%
 def mapNumpyOverDataFrame(
-    f: Callable[..., np.ndarray], df: pd.DataFrame
+    f: Callable[..., np.ndarray], df: pd.DataFrame, /, *, keepColNames=True
 ) -> pd.DataFrame:
-    return pd.DataFrame(f(df), index=df.index, columns=df.columns)
+    return pd.DataFrame(
+        f(df), index=df.index, columns=df.columns if keepColNames else None
+    )
 
 
 def applyLabelMap(
