@@ -1759,9 +1759,13 @@ def constructEquityFeatures(
     del label
     bollinger, stdDev = computeBollingerBands(srDaily, prettyLabelMap=prettyLabelMap)
     # TODO: add volume and dollar volume features
+    shifts = [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 15, 18, 22, 26]
+    shiftedDaily = srDaily.shift(shifts).rename(  # type: ignore
+        columns=lambda col: srPrefix + f"shift{col.removeprefix(srDaily.name)}"
+    )
     rescaledFeatures = (
         stdDev.to_frame()
-        .join([ewm, macd, srDaily.shift(range(1, 22))], how="left", sort=True)  # type: ignore
+        .join([ewm, macd, shiftedDaily], how="left", sort=True)  # type: ignore
         .div(srDaily, axis="index")
     )
     X = rescaledFeatures.join([rsi], how="left", sort=True)
