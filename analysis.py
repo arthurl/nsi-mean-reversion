@@ -365,26 +365,6 @@ def coalesceIntervals(intervals: Iterable[pd.Interval]) -> set[pd.Interval]:
     return aggIntervals
 
 
-def getIntervalsWhereTrue(
-    sr: pd.Series, /, *, key=lambda s: s.astype(bool), closed="right"
-) -> pd.arrays.IntervalArray:
-    sr = sr.sort_index()
-    beforeTime = (
-        sr.index
-        - (sr.index - sr.index.to_series().shift(1, fill_value=sr.index[0])) / 2
-    )
-    afterTime = (
-        sr.index
-        + (sr.index.to_series().shift(-1, fill_value=sr.index[-1]) - sr.index) / 2
-    )
-    trueIntervals = coalesceIntervals(
-        pd.arrays.IntervalArray.from_arrays(beforeTime, afterTime, closed=closed)[
-            key(sr)
-        ]
-    )
-    return pd.arrays.IntervalArray(data=np.array(sorted(trueIntervals)), closed=closed)
-
-
 # %% [markdown]
 # Helper functions for time series processing.
 
@@ -1780,10 +1760,13 @@ def constructEquityFeatures(
     rescaledFeatures = (
         stdDev.to_frame()
         .join([ewm, macd, srDaily.shift(range(1, 22))], how="left", sort=True)  # type: ignore
-        .dropna()
         .div(srDaily, axis="index")
     )
-    X = rescaledFeatures.join([rsi], how="left", sort=True).dropna()
+    X = rescaledFeatures.join([rsi], how="left", sort=True)
+    X["time interval"] = pd.arrays.IntervalArray.from_breaks(
+        list(X.index) + [X.index[-1] + pd.offsets.BDay()], closed="right"
+    )
+    X = X.set_index("time interval").rename_axis(columns="features")
     return X
 
 
@@ -1884,7 +1867,7 @@ for ticker in ["SUNPHARMA", "BHARTIARTL", "CANBK", "TITAN"]:
     data = fetchTicker(ticker)
     X = constructEquityFeatures(
         data, tradingDays=tradingDays, dataLabel="", prettyLabelMap=prettyLabelMap
-    )
+    ).dropna()
     targets, _ = findMACDOptimumReturnIntervals(data["close"])
 
     def getDirection(t) -> int:
