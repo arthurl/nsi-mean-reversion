@@ -2005,10 +2005,15 @@ scorer = sklearn.metrics.make_scorer(
     targetIntervalsDirection=targetTrades["direction"],
     prices=prices,
 )
+metrics = [
+    ("Relevant profit captured", scorer),
+    ("Balanced accuracy", "balanced_accuracy"),
+]
 clf = sklearn.model_selection.GridSearchCV(
     svc,
     paramSpace,
-    scoring=scorer,
+    scoring=dict(metrics),
+    refit=metrics[0][0],  # type: ignore
     n_jobs=-2,
     verbose=0,
 )
@@ -2017,20 +2022,33 @@ clf.fit(XTransformed, infData[dataKind].y)
 del XTransformed
 
 rankedScore = sorted(
-    enumerate(clf.cv_results_["mean_test_score"]), key=lambda x: (-x[1], x[0])
+    enumerate(zip(*(clf.cv_results_[f"mean_test_{metric}"] for metric, _ in metrics))),
+    key=lambda x: (*(-y for y in x[1]), x[0]),
 )
 fig, ax = plt.subplots()
-ax.plot(
-    range(len(rankedScore)),
-    [score for idx, score in rankedScore],
-    linestyle="--",
-    marker="o",
-)
-for rank, (idx, score) in enumerate(rankedScore):
-    ax.annotate(idx, (rank, score), xytext=(0.2, 0.5), textcoords="offset fontsize")
+ax1 = ax
+lines = []
+for metNo, (metric, _) in enumerate(metrics):
+    if metNo == 1:
+        ax1 = ax.twinx()
+    lines.extend(
+        ax1.plot(
+            range(len(rankedScore)),
+            [scores[metNo] for idx, scores in rankedScore],
+            linestyle="--",
+            marker="o",
+            color=f"C{metNo}",
+            label=metric + (" (right)" if metNo >= 1 else ""),
+        )
+    )
+    del metNo, metric, _
+for rank, (idx, scores) in enumerate(rankedScore):
+    ax.annotate(idx, (rank, scores[0]), xytext=(0.2, 0.5), textcoords="offset fontsize")
+    del rank, idx, scores
 ax.set_xlabel("Rank")
 ax.set_ylabel("Mean score")
-del rankedScore
+ax.legend(handles=lines)
+del rankedScore, ax, ax1, lines
 display(clf.best_params_)
 
 # %%
