@@ -32,7 +32,7 @@ from collections.abc import (
     Mapping,
     MutableMapping,
 )
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 import datetime
 from pathlib import Path
 import itertools
@@ -1862,6 +1862,66 @@ def relevantProfitCapturedPerTicker(
     return relevantGains * nonTargetLosses - 1, targetIntervalTotalReturn
 
 
+def relevantProfitCaptured(
+    y: pd.Series,
+    yPred: pd.Series | np.ndarray,
+    /,
+    *,
+    prices: pd.Series | Callable[[str], pd.Series],
+    targetIntervalsDirection: pd.Series | NoneType = None,
+) -> float:
+    if targetIntervalsDirection is None:
+        raise NotImplementedError
+    if not (
+        isinstance(y.index, pd.MultiIndex)
+        and y.index.dtypes.keys()[0] == "ticker"
+        and isinstance(y.index[0][1], pd.Interval)
+        and isinstance(y.index[0][1].left, pd.Timestamp)
+    ):
+        raise ValueError("y must be indexed by ticker and time intervals")
+    if isinstance(yPred, np.ndarray):
+        yPred = pd.Series(data=yPred, index=y.index)
+    if not (
+        isinstance(yPred.index, pd.MultiIndex)
+        and yPred.index.dtypes.keys()[0] == "ticker"
+        and isinstance(yPred.index[0][1], pd.Interval)
+        and isinstance(yPred.index[0][1].left, pd.Timestamp)
+    ):
+        raise ValueError("yPred must be indexed by ticker and time intervals")
+    if isinstance(prices, pd.Series) and not (
+        isinstance(prices.index, pd.MultiIndex)
+        and prices.index.dtypes.keys()[0] == "ticker"
+        and isinstance(prices.index[0][1], pd.Timestamp)
+    ):
+        raise ValueError("Prices must be indexed by ticker and datetime")
+    if len(targetIntervalsDirection) > 0 and not (
+        isinstance(targetIntervalsDirection.index, pd.MultiIndex)
+        and targetIntervalsDirection.index.dtypes.keys()[0] == "ticker"
+        and isinstance(targetIntervalsDirection.index[0][1], pd.Interval)
+        and isinstance(targetIntervalsDirection.index[0][1].left, pd.Timestamp)
+    ):
+        raise ValueError(
+            "Target intervals must be indexed by ticker and time intervals"
+        )
+    y, yPred = y.sort_index(), yPred.sort_index()
+
+    performance = []
+    for ticker in set(y.index.get_level_values("ticker")):
+        ts = (
+            prices(ticker)
+            if isinstance(prices, Callable)
+            else prices.loc(axis=0)[ticker]
+        )
+        perf, maxProfit = relevantProfitCapturedPerTicker(
+            y.loc(axis=0)[ticker],
+            yPred.loc(axis=0)[ticker],
+            targetIntervalsDirection=targetIntervalsDirection.loc(axis=0)[ticker],
+            prices=ts,
+        )
+        performance.append((1 + perf) / (1 + maxProfit))
+    return np.mean(performance).astype(float)
+
+
 # %%
 # %%time
 TESTTIME = pd.Timestamp(2023, 1, 1)
@@ -1906,19 +1966,23 @@ del Xs, ys, oneNs
 # %%time
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
+import sklearn.metrics
 
-scalers = {}
-investedCount, totalCount = 0, 0
-for tickerName in set(infData["train"].X.index.levels[0]):
-    scalers[tickerName] = StandardScaler()
-    infData["train"].X.loc(axis=0)[tickerName, :] = mapNumpyOverDataFrame(
-        scalers[tickerName].fit_transform, infData["train"].X.loc(axis=0)[tickerName, :]
+dataKind = "train"
+scalers = defaultdict(StandardScaler)
+XTransformed = (
+    infData[dataKind]
+    .X.groupby(level="ticker", group_keys=False)
+    .apply(
+        lambda df: mapNumpyOverDataFrame(scalers[df.name].fit_transform, df),
+        include_groups=False,
     )
-    investedCount += sum(infData["train"].y.loc(axis=0)[tickerName, :] != 0)
-    totalCount += len(infData["train"].y.loc(axis=0)[tickerName, :])
-    del tickerName
-balanceInvested = {0: investedCount / totalCount}
-balanceInvested[1] = (1 - balanceInvested[0]) / 2
+    .reindex(infData[dataKind].y.index)
+)
+investedCount = sum(infData[dataKind].y != 0)
+totalCount = len(infData[dataKind].y)
+balanceInvested = {0: totalCount / 3 / investedCount}
+balanceInvested[1] = totalCount / 3 / ((totalCount - investedCount) / 2)
 balanceInvested[-1] = balanceInvested[1]
 del investedCount, totalCount
 paramSpace = {
@@ -1929,11 +1993,28 @@ paramSpace = {
 svc = SVC(
     probability=False, break_ties=True, cache_size=SKLCACHE, random_state=RANDSEED
 )
-clf = sklearn.model_selection.GridSearchCV(
-    svc, paramSpace, scoring="balanced_accuracy", n_jobs=-2, verbose=0
+prices = pd.concat(
+    {
+        tic: fetchTicker(tic)["close"]
+        for tic in set(infData[dataKind].y.index.get_level_values("ticker"))
+    },
+    names=["ticker"],
+).sort_index()
+scorer = sklearn.metrics.make_scorer(
+    relevantProfitCaptured,
+    targetIntervalsDirection=targetTrades["direction"],
+    prices=prices,
 )
-del balanceInvested, paramSpace, svc
-clf.fit(*infData["train"])
+clf = sklearn.model_selection.GridSearchCV(
+    svc,
+    paramSpace,
+    scoring=scorer,
+    n_jobs=-2,
+    verbose=0,
+)
+del balanceInvested, paramSpace, svc, prices, scorer
+clf.fit(XTransformed, infData[dataKind].y)
+del XTransformed
 
 rankedScore = sorted(
     enumerate(clf.cv_results_["mean_test_score"]), key=lambda x: (-x[1], x[0])
