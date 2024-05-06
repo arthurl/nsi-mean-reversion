@@ -2133,6 +2133,27 @@ for label, (X, _) in infData.items():
     del label, X, yPred
 del sr, srDaily, labelMap, seriesPlots, bollinger, _
 
+# %% [markdown]
+# Full confusion matrix.
+
+# %%
+import sklearn.metrics
+
+classLabels = {-1: "short", 0: "exit", 1: "long"}
+
+X = infData["test"].X.loc(axis=0)[ticker]
+y = infData["test"].y.loc(axis=0)[ticker]
+yPred = mapNumpyOverDataFrame(
+    clf.predict,
+    mapNumpyOverDataFrame(scalers[ticker].transform, X),  # type: ignore
+    keepColNames=False,
+).iloc(axis=1)[0]
+print(ticker)
+print(sklearn.metrics.classification_report(y, yPred))
+cm = sklearn.metrics.confusion_matrix(y, yPred, labels=list(classLabels.keys()))
+sklearn.metrics.ConfusionMatrixDisplay(cm, display_labels=classLabels.values()).plot()
+del X, y, yPred, cm
+
 # %%
 import sklearn.metrics
 
