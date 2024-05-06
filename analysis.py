@@ -1467,6 +1467,12 @@ fig = plotTimeseries(
 del labelMap, sr, srVol, ewm, dollarVolSMA
 fig.savefig(BASEDIR / f"M6 - {ticker} mean reversion.pdf", bbox_inches="tight")
 
+# %% [markdown]
+# ## Identify ideal trading intervals
+
+# %% [markdown]
+# ### Identify largest returns historically
+
 
 # %%
 def findMaxReturnIntervals(
@@ -1566,6 +1572,9 @@ ax.set_xlabel("Date")
 ax.set_ylabel(latexEscape("Price / $"))
 ax.set_title(latexEscape(ticker))
 del df2
+
+# %% [markdown]
+# ### Identify ideal intervals based on MACD filtering
 
 
 # %%
@@ -1696,11 +1705,13 @@ fig.savefig(
 )
 del sr, sma, macdCen, optimumTrades
 
+# %% [markdown]
+# ## Prediction of trade using data from closely correlated stocks to cross train
+
 # %%
 InferenceData = namedtuple("InferenceData", ["X", "y"])
 
 
-# %%
 def constructEquityFeatures(
     data: pd.DataFrame,
     /,
@@ -1924,6 +1935,9 @@ def relevantProfitCaptured(
     return np.mean(performance).astype(float)
 
 
+# %% [markdown]
+# Construct train/test dataset.
+
 # %%
 # %%time
 TESTTIME = pd.Timestamp(2023, 1, 1)
@@ -1963,6 +1977,9 @@ infData = {
     "test": InferenceData(Xs.loc(axis=0)[:, TESTTIME:], ys.loc(axis=0)[:, TESTTIME:]),
 }
 del Xs, ys, oneNs
+
+# %% [markdown]
+# Scale features and fit SVM, using GridSearchCV to choose hyparameters.
 
 # %%
 # %%time
@@ -2052,6 +2069,9 @@ ax.set_ylabel("Mean score")
 ax.legend(handles=lines)
 del rankedScore, ax, ax1, lines
 display(clf.best_params_)
+
+# %% [markdown]
+# Visual display of how well the model is fitting.
 
 # %%
 ticker = "SUNPHARMA"
