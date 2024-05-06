@@ -1254,6 +1254,16 @@ with pd.option_context("display.max_rows", 500):
     display(equityUniverse)
 
 # %% [markdown]
+# For now, we just look at stock which have been around since Jan 2021.
+
+# %%
+equityUniverse.drop(
+    equityUniverse[equityUniverse["start"].dt.date > datetime.date(2021, 1, 1)].index,
+    inplace=True,
+)
+display(equityUniverse)
+
+# %% [markdown]
 # # Asset price analysis
 #
 # This function does the heavy lifting of retrieving a time series from the data
@@ -1343,6 +1353,22 @@ def fetchTickersResampledAtTimes(
     resampledData.apply(fillAsOf, args=(fullTickerData,), axis=0)
     return resampledData
 
+
+# %% [markdown]
+# Resample time series.
+
+# %% tags=["active-py"]
+resampledData = fetchTickersResampledAtTimes(equityUniverse.index, ["10:00", "14:45"])
+resampledData.to_csv(BASEDIR / "data" / r"equity_universe_resampled_close.csv")
+
+# %% [markdown]
+# Resampling is slow, so we cache the results.
+
+# %%
+with open(BASEDIR / "data" / r"equity_universe_resampled_close.csv") as f:
+    resampledData = pd.read_csv(f, index_col="time", parse_dates=True)
+resampledData.columns = map(latexEscape, resampledData.columns)  # type: ignore
+display(resampledData)
 
 # %% [markdown]
 # As an example, let’s look at the ticker “5PAISA”.
@@ -1669,26 +1695,6 @@ fig.savefig(
     BASEDIR / f"M6 - {ticker} {plotInterval.left.year} trades.pdf", bbox_inches="tight"
 )
 del sr, sma, macdCen, optimumTrades
-
-# %%
-equityUniverse.drop(
-    equityUniverse[equityUniverse["start"].dt.date > datetime.date(2021, 1, 1)].index,
-    inplace=True,
-)
-display(equityUniverse)
-
-# %% tags=["active-py"]
-resampledData = fetchTickersResampledAtTimes(equityUniverse.index, ["10:00", "14:45"])
-resampledData.to_csv(BASEDIR / "data" / r"equity_universe_resampled_close.csv")
-
-# %%
-with open(BASEDIR / "data" / r"equity_universe_resampled_close.csv") as f:
-    resampledData = pd.read_csv(f, index_col="time", parse_dates=True)
-resampledData.columns = map(latexEscape, resampledData.columns)  # type: ignore
-display(resampledData)
-
-# %%
-display(resampledData[resampledData.isna().any(axis=1)])
 
 # %%
 InferenceData = namedtuple("InferenceData", ["X", "y"])
