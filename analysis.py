@@ -347,8 +347,7 @@ def coalesceIntervals(intervals: Iterable[pd.Interval]) -> set[pd.Interval]:
 
     aggIntervals = set()
     for interval in intervals:
-        overlapped = False
-        for aggInterval in aggIntervals:
+        for aggInterval in list(aggIntervals):
             if any(
                 [
                     interval.overlaps(aggInterval),
@@ -358,12 +357,9 @@ def coalesceIntervals(intervals: Iterable[pd.Interval]) -> set[pd.Interval]:
                     and (aggInterval.closed_right or interval.closed_left),
                 ]
             ):
-                overlapped = True
                 aggIntervals.remove(aggInterval)
-                aggIntervals.add(joinOverlappingIntervals(interval, aggInterval))
-                break
-        if not overlapped:
-            aggIntervals.add(interval)
+                interval = joinOverlappingIntervals(interval, aggInterval)
+        aggIntervals.add(interval)
     return aggIntervals
 
 
