@@ -2033,6 +2033,7 @@ clf = sklearn.model_selection.GridSearchCV(
     paramSpace,
     scoring=dict(metrics),
     refit=metrics[0][0],  # type: ignore
+    cv=sklearn.model_selection.TimeSeriesSplit(),
     n_jobs=-2,
     verbose=0,
 )
