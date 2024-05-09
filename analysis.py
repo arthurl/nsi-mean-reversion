@@ -1672,6 +1672,8 @@ def findMACDOptimumReturnIntervals(
 
 
 # %%
+THRESHOLD = 0.5
+
 sr = data["close"]
 sma = pd.DataFrame()
 for window in ["24h", "30D"]:
@@ -1691,8 +1693,8 @@ sr.name = latexTextSC(latexEscape(ticker.lower()))
 fig = plotTimeseries(
     [sma, macdCen],
     [
-        optimumTrades[optimumTrades["direction"] > 0].index,
-        optimumTrades[optimumTrades["direction"] < 0].index,
+        optimumTrades[optimumTrades["direction"] > THRESHOLD].index,
+        optimumTrades[optimumTrades["direction"] < -THRESHOLD].index,
     ],  # type: ignore
     plotInterval=plotInterval,
     figsize=(8, 4.8),  # (14, 10.5)
@@ -1794,6 +1796,7 @@ def relevantProfitCapturedPerTicker(
     yPred: pd.Series | np.ndarray,
     /,
     *,
+    targetThreshold: float,
     targetIntervalsDirection: pd.Series | NoneType = None,
     prices: pd.Series,
 ) -> tuple[float, float]:
@@ -1815,6 +1818,8 @@ def relevantProfitCapturedPerTicker(
         and isinstance(yPred.index[0].left, pd.Timestamp)  # type: ignore
     ):
         raise ValueError("yPred must be indexed by time intervals")
+    if targetThreshold < 0:
+        raise ValueError("Target threshold must be positive")
     if not isinstance(prices.index, pd.DatetimeIndex):
         raise ValueError("Prices must be a time series")
     if len(targetIntervalsDirection) > 0 and not (
@@ -1846,29 +1851,33 @@ def relevantProfitCapturedPerTicker(
         targetIntervalTotalReturn *= max(0, gain) + 1
     targetIntervalTotalReturn -= 1
 
-    predLongIntervals = coalesceIntervals(yPred[yPred > 0].index)
-    predShortIntervals = coalesceIntervals(yPred[yPred < 0].index)
+    predLongIntervals = coalesceIntervals(yPred[yPred > targetThreshold].index)
+    predShortIntervals = coalesceIntervals(yPred[yPred < -targetThreshold].index)
 
     relevantGains = 1.0
     for interval in intervalIntersection(
-        predLongIntervals, targetIntervalsDirection[targetIntervalsDirection > 0].index
+        predLongIntervals,
+        targetIntervalsDirection[targetIntervalsDirection > targetThreshold].index,
     ):
         gain = prices.asof(interval.right) / prices.asof(interval.left) - 1  # type: ignore
         relevantGains *= max(0, gain) + 1
     for interval in intervalIntersection(
-        predShortIntervals, targetIntervalsDirection[targetIntervalsDirection < 0].index
+        predShortIntervals,
+        targetIntervalsDirection[targetIntervalsDirection < -targetThreshold].index,
     ):
         gain = 1 - prices.asof(interval.right) / prices.asof(interval.left)  # type: ignore
         relevantGains *= max(0, gain) + 1
 
     nonTargetLosses = 1.0
     for interval in intervalDifference(
-        predLongIntervals, targetIntervalsDirection[targetIntervalsDirection > 0].index
+        predLongIntervals,
+        targetIntervalsDirection[targetIntervalsDirection > targetThreshold].index,
     ):
         loss = 1 - prices.asof(interval.right) / prices.asof(interval.left)  # type: ignore
         nonTargetLosses *= 1 - max(0, loss)
     for interval in intervalDifference(
-        predShortIntervals, targetIntervalsDirection[targetIntervalsDirection < 0].index
+        predShortIntervals,
+        targetIntervalsDirection[targetIntervalsDirection < -targetThreshold].index,
     ):
         loss = prices.asof(interval.right) / prices.asof(interval.left) - 1  # type: ignore
         nonTargetLosses *= 1 - max(0, loss)
@@ -1881,6 +1890,7 @@ def relevantProfitCaptured(
     /,
     *,
     prices: pd.Series | Callable[[str], pd.Series],
+    targetThreshold: float,
     targetIntervalsDirection: pd.Series | NoneType = None,
 ) -> float:
     if targetIntervalsDirection is None:
@@ -1928,6 +1938,7 @@ def relevantProfitCaptured(
         perf, maxProfit = relevantProfitCapturedPerTicker(
             y.loc(axis=0)[ticker],
             yPred.loc(axis=0)[ticker],
+            targetThreshold=targetThreshold,
             targetIntervalsDirection=targetIntervalsDirection.loc(axis=0)[ticker],
             prices=ts,
         )
@@ -2021,6 +2032,7 @@ prices = pd.concat(
 ).sort_index()
 scorer = sklearn.metrics.make_scorer(
     relevantProfitCaptured,
+    targetThreshold=THRESHOLD,
     targetIntervalsDirection=targetTrades["direction"],
     prices=prices,
 )
@@ -2105,10 +2117,10 @@ for label, (X, _) in infData.items():
     fig = plotTimeseries(
         seriesPlots,
         [
-            target[target["direction"] > 0].index,  # type: ignore
-            target[target["direction"] < 0].index,  # type: ignore
-            coalesceIntervals(yPred[yPred > 0].index),
-            coalesceIntervals(yPred[yPred < 0].index),
+            target[target["direction"] > THRESHOLD].index,  # type: ignore
+            target[target["direction"] < -THRESHOLD].index,  # type: ignore
+            coalesceIntervals(yPred[yPred > THRESHOLD].index),
+            coalesceIntervals(yPred[yPred < -THRESHOLD].index),
         ],
         [bollinger],
         plotInterval=pd.Interval(X.index.left.min(), X.index.right.max()),
