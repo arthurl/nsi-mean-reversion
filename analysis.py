@@ -2060,8 +2060,14 @@ del balanceInvested, paramSpace, model, prices, scorer
 del XTransformed
 
 rankedScore = sorted(
-    enumerate(zip(*(clf.cv_results_[f"mean_test_{metric}"] for metric, _ in metrics))),
-    key=lambda x: (*(-y for y in x[1]), x[0]),
+    enumerate(
+        zip(
+            *(clf.cv_results_[f"mean_test_{metric}"] for metric, _ in metrics),
+            clf.cv_results_[f"rank_test_{metrics[0][0]}"],
+            strict=True,
+        )
+    ),
+    key=lambda x: (x[1][-1], *(-y for y in x[1][:-1]), x[0]),
 )
 fig, ax = plt.subplots()
 ax1 = ax
@@ -2081,7 +2087,23 @@ for metNo, (metric, _) in enumerate(metrics):
     )
     del metNo, metric, _
 for rank, (idx, scores) in enumerate(rankedScore):
-    ax.annotate(idx, (rank, scores[0]), xytext=(0.2, 0.5), textcoords="offset fontsize")
+    toLabel = rank == len(rankedScore) // 2
+    ax.annotate(
+        ("idx=" if toLabel else "") + str(idx),
+        (rank, scores[0]),
+        xytext=(0, 0.7),
+        textcoords="offset fontsize",
+        va="bottom",
+        rotation=90 if toLabel else 0,
+    )
+    ax.annotate(
+        ("rank=" if toLabel else "") + str(scores[-1] - 1),
+        (rank, scores[0]),
+        xytext=(0, -1),
+        textcoords="offset fontsize",
+        va="top",
+        rotation=90 if toLabel else 0,
+    )
     del rank, idx, scores
 ax.set_xlabel("Rank")
 ax.set_ylabel("Mean score")
