@@ -2020,7 +2020,7 @@ paramSpace = {
     "kernel": ["rbf"],
     "class_weight": ["balanced", balanceInvested],
 }
-svc = SVC(
+model = SVC(
     probability=False, break_ties=True, cache_size=SKLCACHE, random_state=RANDSEED
 )
 prices = pd.concat(
@@ -2041,7 +2041,7 @@ metrics = [
     ("Balanced accuracy", "balanced_accuracy"),
 ]
 clf = sklearn.model_selection.GridSearchCV(
-    svc,
+    model,
     paramSpace,
     scoring=dict(metrics),
     refit=metrics[0][0],  # type: ignore
@@ -2049,7 +2049,7 @@ clf = sklearn.model_selection.GridSearchCV(
     n_jobs=-2,
     verbose=0,
 )
-del balanceInvested, paramSpace, svc, prices, scorer
+del balanceInvested, paramSpace, model, prices, scorer
 clf.fit(XTransformed, infData[dataKind].y)
 del XTransformed
 
