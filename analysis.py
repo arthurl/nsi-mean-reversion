@@ -2018,7 +2018,6 @@ del investedCount, totalCount
 paramSpace = {
     "C": [10**i for i in range(-5, 5)],
     "kernel": ["rbf"],
-    "class_weight": ["balanced", balanceInvested],
 }
 model = SVC(
     probability=False, break_ties=True, cache_size=SKLCACHE, random_state=RANDSEED
@@ -2049,8 +2048,14 @@ clf = sklearn.model_selection.GridSearchCV(
     n_jobs=-2,
     verbose=0,
 )
+clf.fit(
+    XTransformed,
+    infData[dataKind].y,
+    sample_weight=infData[dataKind].y.map(
+        balanceInvested
+    ),  # TODO: implement this in a way that allows for hyperparameter search
+)
 del balanceInvested, paramSpace, model, prices, scorer
-clf.fit(XTransformed, infData[dataKind].y)
 del XTransformed
 
 rankedScore = sorted(
