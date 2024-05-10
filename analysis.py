@@ -1952,11 +1952,12 @@ def relevantProfitCaptured(
 # %%
 # %%time
 TESTTIME = pd.Timestamp(2023, 1, 1)
+tickers = ["SUNPHARMA", "BHARTIARTL", "CANBK", "TITAN"]
 prettyLabelMap = {}
 tradingDays: pd.DatetimeIndex = resampledData.at_time(datetime.time(10, 0)).index  # type: ignore
 Xs, ys = {}, {}
 targetTrades = {}
-for ticker in ["SUNPHARMA", "BHARTIARTL", "CANBK", "TITAN"]:
+for ticker in tickers:
     data = fetchTicker(ticker)
     X = constructEquityFeatures(
         data, tradingDays=tradingDays, dataLabel="", prettyLabelMap=prettyLabelMap
@@ -2092,64 +2093,66 @@ display(clf.best_params_)
 # Visual display of how well the model is fitting.
 
 # %%
-ticker = "SUNPHARMA"
-data = fetchTicker(ticker)
-sr = data["close"]
-sr.name = ticker
-srDaily = timeseriesAsOfTimestamps(sr, tradingDays)
-labelMap = {sr.name: latexTextSC(latexEscape(sr.name.lower()))}
-seriesPlots = [
-    computeMultiple(
-        computeEWM,
-        sr,
-        minPeriods=10,
-        multipleArgs=[{"window": w} for w in ["24h", "30D"]],
-        prettyLabelMap=labelMap,
-    ),
-    computeMACD(sr, short="24D", long="52D", ave="18D", prettyLabelMap=labelMap),
-]
-bollinger, _ = computeBollingerBands(srDaily, prettyLabelMap=labelMap)
-labelMap = {k: v.removeprefix(labelMap[sr.name] + " ") for k, v in labelMap.items()}
-applyLabelMap(labelMap, seriesPlots + [bollinger])
-target = targetTrades.loc(axis=0)[ticker]
-for label, (X, _) in infData.items():
-    X = X.loc(axis=0)[ticker]
-    yPred = mapNumpyOverDataFrame(
-        clf.predict,
-        mapNumpyOverDataFrame(scalers[ticker].transform, X),  # type: ignore
-        keepColNames=False,
-    ).iloc(axis=1)[0]
-    fig = plotTimeseries(
-        seriesPlots,
-        [
-            target[target["direction"] > THRESHOLD].index,  # type: ignore
-            target[target["direction"] < -THRESHOLD].index,  # type: ignore
-            coalesceIntervals(yPred[yPred > THRESHOLD].index),
-            coalesceIntervals(yPred[yPred < -THRESHOLD].index),
-        ],
-        [bollinger],
-        plotInterval=pd.Interval(X.index.left.min(), X.index.right.max()),
-        figsize=(14, 10.5),  # (8, 4.8),
-        title=f"{labelMap[ticker]} ({label})",
-        ylabels=[
-            latexEscape("Price / $"),
-            latexTextSC("macd") + latexEscape(" / $"),
-        ],
-        plotKWArgs={"alpha": 0.8},
-        intervalColours=["xkcd:green", "xkcd:pale red"] * 2,
-        intervalKWArgs=[
-            {"ymin": 0, "ymax": 0.7},
-            {"ymin": 0.01, "ymax": 0.71},
-            {"ymin": 0.29, "ymax": 0.99},
-            {"ymin": 0.3, "ymax": 1},
-        ],
-        bandColours=["C0"],
-    )
-    fig.axes[1].axhline(y=0, alpha=0.2, color="xkcd:grey", linestyle="--")
-    fig.axes[0].annotate("(predicted intervals)", (0.1, 0.9), xycoords="axes fraction")
-    fig.axes[0].annotate("(target intervals)", (0.1, 0.1), xycoords="axes fraction")
-    del label, X, yPred
-del sr, srDaily, labelMap, seriesPlots, bollinger, _
+for ticker in tickers:
+    data = fetchTicker(ticker)
+    sr = data["close"]
+    sr.name = ticker
+    srDaily = timeseriesAsOfTimestamps(sr, tradingDays)
+    labelMap = {sr.name: latexTextSC(latexEscape(sr.name.lower()))}
+    seriesPlots = [
+        computeMultiple(
+            computeEWM,
+            sr,
+            minPeriods=10,
+            multipleArgs=[{"window": w} for w in ["24h", "30D"]],
+            prettyLabelMap=labelMap,
+        ),
+        computeMACD(sr, short="24D", long="52D", ave="18D", prettyLabelMap=labelMap),
+    ]
+    bollinger, _ = computeBollingerBands(srDaily, prettyLabelMap=labelMap)
+    labelMap = {k: v.removeprefix(labelMap[sr.name] + " ") for k, v in labelMap.items()}
+    applyLabelMap(labelMap, seriesPlots + [bollinger])
+    target = targetTrades.loc(axis=0)[ticker]
+    for label, (X, _) in infData.items():
+        X = X.loc(axis=0)[ticker]
+        yPred = mapNumpyOverDataFrame(
+            clf.predict,
+            mapNumpyOverDataFrame(scalers[ticker].transform, X),  # type: ignore
+            keepColNames=False,
+        ).iloc(axis=1)[0]
+        fig = plotTimeseries(
+            seriesPlots,
+            [
+                target[target["direction"] > THRESHOLD].index,  # type: ignore
+                target[target["direction"] < -THRESHOLD].index,  # type: ignore
+                coalesceIntervals(yPred[yPred > THRESHOLD].index),
+                coalesceIntervals(yPred[yPred < -THRESHOLD].index),
+            ],
+            [bollinger],
+            plotInterval=pd.Interval(X.index.left.min(), X.index.right.max()),
+            figsize=(14, 10.5),  # (8, 4.8),
+            title=f"{labelMap[ticker]} ({label})",
+            ylabels=[
+                latexEscape("Price / $"),
+                latexTextSC("macd") + latexEscape(" / $"),
+            ],
+            plotKWArgs={"alpha": 0.8},
+            intervalColours=["xkcd:green", "xkcd:pale red"] * 2,
+            intervalKWArgs=[
+                {"ymin": 0, "ymax": 0.7},
+                {"ymin": 0.01, "ymax": 0.71},
+                {"ymin": 0.29, "ymax": 0.99},
+                {"ymin": 0.3, "ymax": 1},
+            ],
+            bandColours=["C0"],
+        )
+        fig.axes[1].axhline(y=0, alpha=0.2, color="xkcd:grey", linestyle="--")
+        fig.axes[0].annotate(
+            "(predicted intervals)", (0.1, 0.9), xycoords="axes fraction"
+        )
+        fig.axes[0].annotate("(target intervals)", (0.1, 0.1), xycoords="axes fraction")
+        del label, X, yPred
+    del sr, srDaily, labelMap, seriesPlots, bollinger, target, _
 
 # %% [markdown]
 # Full confusion matrix.
