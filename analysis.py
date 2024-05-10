@@ -566,13 +566,13 @@ def plotTimeseries(
     plotInterval: pd.Interval | NoneType = None,
     figsize=None,
     title: str = "",
-    ylabels: Iterable[str] = iter([]),
+    ylabels: Iterable[str] = [],
     plotKWArgs: dict | Iterable[dict] | NoneType = None,
-    intervalColours: Iterable[str] = iter([]),
+    intervalColours: Iterable[str] = [],
     intervalKWArgs: dict | Iterable[dict] | NoneType = None,
     bandUpperColSuffix="upper",
     bandLowerColSuffix="lower",
-    bandColours: Iterable[str] = iter([]),
+    bandColours: Iterable[str] = [],
     bandKWArgs: dict | Iterable[dict] | NoneType = None,
 ) -> matplotlib.figure.Figure:
     defaultPlotKWArgs = {}
