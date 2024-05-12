@@ -181,6 +181,25 @@ def computeMultiple(
     return results[0].to_frame().join(results[1:], how="outer")
 
 
+def regexApplyCols(
+    data: pd.DataFrame,
+    weights: Mapping[str, float | Callable[[pd.Series], pd.Series]],
+    /,
+) -> pd.DataFrame:
+    import re
+
+    data = data.copy(deep=False)  # this is suffice to not modify the original
+    for regex, w in weights.items():
+        colMatches = [col for col in data.columns if re.fullmatch(regex, col)]
+        if not colMatches:
+            raise ValueError(f"regex {regex} matches no columns")
+        if isinstance(w, Callable):
+            data[colMatches] = data[colMatches].apply(w, axis=0)
+        else:
+            data[colMatches] = data[colMatches] * w
+    return data
+
+
 # %% [markdown]
 # Helper functions for Pandas intervals.
 
@@ -1999,16 +2018,19 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 import sklearn.metrics
 
+featureWeights = {r"shift_\d+": 0.1}
+
 dataKind = "train"
 scalers = defaultdict(StandardScaler)
-XTransformed = (
+XTransformed = regexApplyCols(
     infData[dataKind]
     .X.groupby(level="ticker", group_keys=False)
     .apply(
         lambda df: mapNumpyOverDataFrame(scalers[df.name].fit_transform, df),
         include_groups=False,
     )
-    .reindex(infData[dataKind].y.index)
+    .reindex(infData[dataKind].y.index),
+    featureWeights,
 )
 investedCount = sum(infData[dataKind].y != 0)
 totalCount = len(infData[dataKind].y)
@@ -2139,7 +2161,10 @@ for ticker in tickers:
         X = X.loc(axis=0)[ticker]
         yPred = mapNumpyOverDataFrame(
             clf.predict,
-            mapNumpyOverDataFrame(scalers[ticker].transform, X),  # type: ignore
+            regexApplyCols(
+                mapNumpyOverDataFrame(scalers[ticker].transform, X),  # type: ignore
+                featureWeights,
+            ),
             keepColNames=False,
         ).iloc(axis=1)[0]
         fig = plotTimeseries(
