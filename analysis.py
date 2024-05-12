@@ -2124,6 +2124,18 @@ ax.legend(handles=lines)
 del rankedScore, ax, ax1, lines
 display(clf.best_params_)
 
+# %%
+score, _, pvalue = sklearn.model_selection.permutation_test_score(
+    clf.best_estimator_,
+    *infData,
+    scoring=metrics[0][1],
+    cv=testTimeCV,
+    n_jobs=-2,
+    random_state=RANDSEED,  # type:ignore
+)
+print(f"score = {score}, pvalue = {pvalue}")
+del score, pvalue, _
+
 # %% [markdown]
 # Visual display of how well the model is fitting.
 
