@@ -2012,8 +2012,8 @@ XTransformed = (
 )
 investedCount = sum(infData[dataKind].y != 0)
 totalCount = len(infData[dataKind].y)
-balanceInvested = {0: totalCount / 3 / investedCount}
-balanceInvested[1] = totalCount / 3 / ((totalCount - investedCount) / 2)
+balanceInvested = {0: totalCount / 3 / (totalCount - investedCount)}
+balanceInvested[1] = totalCount / 3 / (investedCount / 2)
 balanceInvested[-1] = balanceInvested[1]
 del investedCount, totalCount
 paramSpace = {
