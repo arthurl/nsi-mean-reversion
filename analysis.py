@@ -2000,14 +2000,11 @@ for ticker in tickers:
 Xs = pd.concat(Xs, names=["ticker"]).sort_index()
 ys = pd.concat(ys, names=["ticker"]).sort_index().rename("target direction")  # type: ignore
 targetTrades = pd.concat(targetTrades, names=["ticker"]).sort_index()
-oneNs = pd.Timedelta(nanoseconds=1)  # type: ignore
-infData = {
-    "train": InferenceData(
-        Xs.loc(axis=0)[:, : TESTTIME - oneNs], ys.loc(axis=0)[:, : TESTTIME - oneNs]
-    ),
-    "test": InferenceData(Xs.loc(axis=0)[:, TESTTIME:], ys.loc(axis=0)[:, TESTTIME:]),
-}
-del Xs, ys, oneNs
+testTimeCV = sklearn.model_selection.PredefinedSplit(
+    np.where(ys.index.get_level_values("time interval").left >= TESTTIME, 1, -1)
+)
+infData = InferenceData(Xs, ys)
+del TESTTIME, Xs, ys
 
 # %% [markdown]
 # Scale features and fit SVM, using GridSearchCV to choose hyparameters.
@@ -2020,20 +2017,22 @@ import sklearn.metrics
 
 featureWeights = {r"shift_\d+": 0.1}
 
-dataKind = "train"
+trainIdxs, _ = next(testTimeCV.split())
+X = infData.X.iloc[trainIdxs]
+y = infData.y.iloc[trainIdxs]
+del trainIdxs
 scalers = defaultdict(StandardScaler)
 XTransformed = regexApplyCols(
-    infData[dataKind]
-    .X.groupby(level="ticker", group_keys=False)
+    X.groupby(level="ticker", group_keys=False)
     .apply(
         lambda df: mapNumpyOverDataFrame(scalers[df.name].fit_transform, df),
         include_groups=False,
     )
-    .reindex(infData[dataKind].y.index),
+    .reindex(y.index),
     featureWeights,
 )
-investedCount = sum(infData[dataKind].y != 0)
-totalCount = len(infData[dataKind].y)
+investedCount = sum(y != 0)
+totalCount = len(y)
 balanceInvested = {0: totalCount / 3 / (totalCount - investedCount)}
 balanceInvested[1] = totalCount / 3 / (investedCount / 2)
 balanceInvested[-1] = balanceInvested[1]
@@ -2046,10 +2045,7 @@ model = SVC(
     probability=False, break_ties=True, cache_size=SKLCACHE, random_state=RANDSEED
 )
 prices = pd.concat(
-    {
-        tic: fetchTicker(tic)["close"]
-        for tic in set(infData[dataKind].y.index.get_level_values("ticker"))
-    },
+    {tic: fetchTicker(tic)["close"] for tic in set(y.index.get_level_values("ticker"))},
     names=["ticker"],
 ).sort_index()
 scorer = sklearn.metrics.make_scorer(
@@ -2071,15 +2067,10 @@ clf = sklearn.model_selection.GridSearchCV(
     n_jobs=-2,
     verbose=0,
 )
-clf.fit(
-    XTransformed,
-    infData[dataKind].y,
-    sample_weight=infData[dataKind].y.map(
-        balanceInvested
-    ),  # TODO: implement this in a way that allows for hyperparameter search
-)
+# TODO: implement sample_weight in a way that allows for hyperparameter search
+clf.fit(XTransformed, y, sample_weight=y.map(balanceInvested))
 del balanceInvested, paramSpace, model, prices, scorer
-del XTransformed
+del X, y, XTransformed
 
 rankedScore = sorted(
     enumerate(
@@ -2157,8 +2148,8 @@ for ticker in tickers:
     labelMap = {k: v.removeprefix(labelMap[sr.name] + " ") for k, v in labelMap.items()}
     applyLabelMap(labelMap, seriesPlots + [bollinger])
     target = targetTrades.loc(axis=0)[ticker]
-    for label, (X, _) in infData.items():
-        X = X.loc(axis=0)[ticker]
+    for phase, idxs in zip(["train", "test"], next(testTimeCV.split())):
+        X = infData.X.iloc[idxs].loc(axis=0)[ticker]
         yPred = mapNumpyOverDataFrame(
             clf.predict,
             regexApplyCols(
@@ -2178,7 +2169,7 @@ for ticker in tickers:
             [bollinger],
             plotInterval=pd.Interval(X.index.left.min(), X.index.right.max()),
             figsize=(14, 10.5),  # (8, 4.8),
-            title=f"{labelMap[ticker]} ({label})",
+            title=f"{labelMap[ticker]} ({phase})",
             ylabels=[
                 latexEscape("Price / $"),
                 latexTextSC("macd") + latexEscape(" / $"),
@@ -2198,7 +2189,7 @@ for ticker in tickers:
             "(predicted intervals)", (0.1, 0.9), xycoords="axes fraction"
         )
         fig.axes[0].annotate("(target intervals)", (0.1, 0.1), xycoords="axes fraction")
-        del label, X, yPred
+        del phase, idxs, X, yPred
     del sr, srDaily, labelMap, seriesPlots, bollinger, target, _
 
 # %% [markdown]
@@ -2209,8 +2200,10 @@ import sklearn.metrics
 
 classLabels = {-1: "short", 0: "exit", 1: "long"}
 
-X = infData["test"].X.loc(axis=0)[ticker]
-y = infData["test"].y.loc(axis=0)[ticker]
+_, testIdxs = next(testTimeCV.split())
+X = infData.X.iloc[testIdxs].loc(axis=0)[ticker]
+y = infData.y.iloc[testIdxs].loc(axis=0)[ticker]
+del testIdxs, _
 yPred = mapNumpyOverDataFrame(
     clf.predict,
     mapNumpyOverDataFrame(scalers[ticker].transform, X),  # type: ignore
