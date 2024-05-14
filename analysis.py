@@ -45,6 +45,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import pandas as pd
+import scipy
 import sklearn as sk
 import sklearn.pipeline
 import sklearn.model_selection
@@ -2038,7 +2039,7 @@ balanceInvested[1] = totalCount / 3 / (investedCount / 2)
 balanceInvested[-1] = balanceInvested[1]
 del investedCount, totalCount
 paramSpace = {
-    "C": [10**i for i in range(-5, 5)],
+    "C": scipy.stats.loguniform(a=1e-5, b=1e3),
     "kernel": ["rbf"],
 }
 model = SVC(
@@ -2063,9 +2064,10 @@ metrics = [
     ),
     ("Balanced accuracy", "balanced_accuracy"),
 ]
-clf = sklearn.model_selection.GridSearchCV(
+clf = sklearn.model_selection.RandomizedSearchCV(
     model,
     paramSpace,
+    n_iter=50,
     scoring={
         name: sklearn.metrics.make_scorer(score_func=f)
         if isinstance(f, Callable)
