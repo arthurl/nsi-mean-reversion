@@ -2094,14 +2094,23 @@ rankedScore = sorted(
     ),
     key=lambda x: (x[1][-1], *(-y for y in x[1][:-1]), x[0]),
 )
-fig, ax = plt.subplots()
-ax1 = ax
+fig, ax = plt.subplots(figsize=(14, 4.8))
+thisAx = ax
+axPrev = ax
+axBBoxXMax = 0
 lines = []
 for metNo, (metric, _) in enumerate(metrics):
-    if metNo == 1:
-        ax1 = ax.twinx()
+    if metNo > 0:
+        if metNo == 1:
+            axBBoxXMax = ax.get_tightbbox().xmax
+        thisAx = ax.twinx()
+        # move spine out of the previous bounding box
+        thisAx.spines.right.set_position(
+            ("outward", axPrev.get_tightbbox().xmax - axBBoxXMax)
+        )
+        thisAx.tick_params(axis="y", colors=f"C{metNo}")
     lines.extend(
-        ax1.plot(
+        thisAx.plot(
             range(len(rankedScore)),
             [scores[metNo] for idx, scores in rankedScore],
             linestyle="--",
@@ -2110,6 +2119,7 @@ for metNo, (metric, _) in enumerate(metrics):
             label=metric + (" (right)" if metNo >= 1 else ""),
         )
     )
+    axPrev = thisAx
     del metNo, metric, _
 for rank, (idx, scores) in enumerate(rankedScore):
     toLabel = rank == len(rankedScore) // 2
@@ -2133,7 +2143,7 @@ for rank, (idx, scores) in enumerate(rankedScore):
 ax.set_xlabel("Rank")
 ax.set_ylabel("Mean score")
 ax.legend(handles=lines)
-del rankedScore, ax, ax1, lines
+del rankedScore, ax, thisAx, axPrev, axBBoxXMax, lines
 display(clf.best_params_)
 
 
