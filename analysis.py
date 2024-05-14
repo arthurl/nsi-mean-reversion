@@ -2044,24 +2044,34 @@ paramSpace = {
 model = SVC(
     probability=False, break_ties=True, cache_size=SKLCACHE, random_state=RANDSEED
 )
-prices = pd.concat(
+prices: pd.Series = pd.concat(  # type: ignore
     {tic: fetchTicker(tic)["close"] for tic in set(y.index.get_level_values("ticker"))},
     names=["ticker"],
 ).sort_index()
-scorer = sklearn.metrics.make_scorer(
-    relevantProfitCaptured,
-    targetThreshold=THRESHOLD,
-    targetIntervalsDirection=targetTrades["direction"],
-    prices=prices,
-)
 metrics = [
-    ("Relevant profit captured", scorer),
+    (
+        "Relevant profit captured",
+        functools.update_wrapper(  # sklearn requires the __name__ attribute
+            functools.partial(
+                relevantProfitCaptured,
+                targetThreshold=THRESHOLD,
+                targetIntervalsDirection=targetTrades["direction"],
+                prices=prices,
+            ),
+            relevantProfitCaptured,
+        ),
+    ),
     ("Balanced accuracy", "balanced_accuracy"),
 ]
 clf = sklearn.model_selection.GridSearchCV(
     model,
     paramSpace,
-    scoring=dict(metrics),
+    scoring={
+        name: sklearn.metrics.make_scorer(score_func=f)
+        if isinstance(f, Callable)
+        else f
+        for name, f in metrics
+    },
     refit=metrics[0][0],  # type: ignore
     cv=sklearn.model_selection.TimeSeriesSplit(),
     n_jobs=-2,
@@ -2069,7 +2079,7 @@ clf = sklearn.model_selection.GridSearchCV(
 )
 # TODO: implement sample_weight in a way that allows for hyperparameter search
 clf.fit(XTransformed, y, sample_weight=y.map(balanceInvested))
-del balanceInvested, paramSpace, model, prices, scorer
+del balanceInvested, paramSpace, model, prices
 del X, y, XTransformed
 
 rankedScore = sorted(
@@ -2128,7 +2138,9 @@ display(clf.best_params_)
 score, _, pvalue = sklearn.model_selection.permutation_test_score(
     clf.best_estimator_,
     *infData,
-    scoring=metrics[0][1],
+    scoring=sklearn.metrics.make_scorer(score_func=metrics[0][1])
+    if isinstance(metrics[0][1], Callable)
+    else metrics[0][1],
     cv=testTimeCV,
     n_jobs=-2,
     random_state=RANDSEED,  # type:ignore
