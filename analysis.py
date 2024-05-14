@@ -2134,19 +2134,57 @@ ax.legend(handles=lines)
 del rankedScore, ax, ax1, lines
 display(clf.best_params_)
 
+
 # %%
-score, _, pvalue = sklearn.model_selection.permutation_test_score(
-    clf.best_estimator_,
-    *infData,
-    scoring=sklearn.metrics.make_scorer(score_func=metrics[0][1])
-    if isinstance(metrics[0][1], Callable)
-    else metrics[0][1],
-    cv=testTimeCV,
-    n_jobs=-2,
-    random_state=RANDSEED,  # type:ignore
+# %%time
+def permutationTestScore(
+    y, yPred, /, *, scoring: str | Callable[..., float], nPermutations=200
+) -> tuple[float, np.ndarray, float]:
+    def getScoreFunc(name: str) -> Callable[..., float]:
+        scorer = sklearn.metrics.get_scorer(name)
+        return lambda z, zPred: scorer._sign * scorer._score_func(z, zPred)
+
+    scoreFunc: Callable[..., float] = (
+        getScoreFunc(scoring) if isinstance(scoring, str) else scoring
+    )
+    permScores = np.array(
+        [
+            scoreFunc(
+                y, y.sample(frac=1, replace=False, ignore_index=True).set_axis(y.index)
+            )
+            for _ in range(nPermutations)
+        ]
+    )
+    score = scoreFunc(y, yPred)
+    pvalue: float = (np.sum(permScores >= score) + 1.0) / (nPermutations + 1)  # type: ignore
+    return score, permScores, pvalue
+
+
+scores = []
+for phase, idxs in zip(["train", "test"], next(testTimeCV.split()), strict=True):
+    X = infData.X.iloc[idxs].loc(axis=0)[ticker, :]
+    y = infData.y.iloc[idxs].loc(axis=0)[ticker, :]
+    yPred = mapNumpyOverDataFrame(
+        clf.predict,
+        regexApplyCols(
+            mapNumpyOverDataFrame(scalers[ticker].transform, X),  # type: ignore
+            featureWeights,
+        ),
+        keepColNames=False,
+    ).iloc(axis=1)[0]
+    for metric, scoring in metrics:
+        score, _, pvalue = permutationTestScore(y, yPred, scoring=scoring)
+        scores.append((phase, metric, score, pvalue))
+        del metric, scoring, score, pvalue, _
+    del phase, idxs, X, y, yPred
+display(
+    pd.DataFrame.from_records(
+        data=scores,
+        columns=["phase", "metric", "score", "p-value"],
+        index=["phase", "metric"],
+    )
 )
-print(f"score = {score}, pvalue = {pvalue}")
-del score, pvalue, _
+del scores
 
 # %% [markdown]
 # Visual display of how well the model is fitting.
