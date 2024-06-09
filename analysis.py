@@ -154,6 +154,14 @@ def mapNumpyOverDataFrame(
     )
 
 
+def mapNumpyDataFrameToSeries(
+    f: Callable[..., np.ndarray], df: pd.DataFrame, /
+) -> pd.Series:
+    result = mapNumpyOverDataFrame(f, df, keepColNames=False)
+    assert len(result.columns) == 1
+    return result.iloc(axis=1)[0]
+
+
 def applyLabelMap(
     labelMap: dict[str, str], data: Iterable[pd.Series | pd.DataFrame]
 ) -> None:
