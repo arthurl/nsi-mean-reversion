@@ -527,6 +527,48 @@ class MethodCallTransformer(sklearn.base.BaseEstimator, sklearn.base.Transformer
                 return self.callmethod(es)(XTrans)
 
 
+class GroupedLevelTransformer(
+    sklearn.base.BaseEstimator, sklearn.base.TransformerMixin
+):
+    def __init__(self, transformer, *, level: str, keepColNames: bool = False):
+        super().__init__()
+        self.transformer = transformer
+        self.transformers = defaultdict(lambda: sklearn.base.clone(self.transformer))
+        self.level = level
+        self.keepColNames = keepColNames
+
+    def fit(self, X, y=None, *args, **kwargs):
+        df = X
+        tmpname = next(
+            name for i in range(999999999) if (name := f"y{i}") not in df.columns
+        )
+        if y is not None:
+            oldyname = None
+            if y.name and y.name not in df.columns:
+                tmpname = y.name
+            else:
+                oldyname = y.name
+                y.name = tmpname
+            df = df.join(y)
+            if oldyname is not None:
+                y.name = oldyname
+        for name, grpdf in df.groupby(level=self.level):
+            grpX = grpdf.loc(axis=1)[grpdf.columns != tmpname]
+            grpY = None if y is None else grpdf[tmpname]
+            self.transformers[name].fit(grpX, grpY, *args, **kwargs)  # type: ignore
+        return self
+
+    def transform(self, X):
+        return X.groupby(level=self.level, group_keys=False).apply(
+            lambda df: mapNumpyOverDataFrame(
+                self.transformers[df.name].transform,  # type: ignore
+                df,
+                keepColNames=self.keepColNames,
+            ),
+            include_groups=False,
+        )
+
+
 # %% [markdown]
 # Helper functions for time series processing.
 
