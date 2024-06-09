@@ -116,6 +116,13 @@ else:
     def latexTextSC(text: str) -> str:
         return text.upper()
 
+
+def getattrrec(obj, attr, *args):
+    from functools import reduce
+
+    return reduce(lambda o, a: getattr(o, a, *args), (obj, *attr.split(".")))
+
+
 # %% [markdown]
 # Helper function for multiprocessing.
 
@@ -476,6 +483,48 @@ def plotCVMetrics(
     ax.set_ylabel("Mean score")
     ax.legend(handles=lines)
     return fig
+
+
+class MethodCallTransformer(sklearn.base.BaseEstimator, sklearn.base.TransformerMixin):
+    def __init__(
+        self,
+        estimator,
+        *,
+        callmethod: str | Callable[..., Callable] = "apply",
+        prefit: bool = False,
+        suppressTransformWarnings: bool = False,
+    ):
+        super().__init__()
+        self.estimator = estimator
+        self.callmethod = callmethod
+        self.prefit = prefit
+        self.suppressTransformWarnings = suppressTransformWarnings
+        if prefit:
+            self.__sklearn_clone__ = lambda: self
+
+    def fit(self, X, y, *args, **kwargs):
+        if not self.prefit:
+            self.estimator.fit(X, y, *args, **kwargs)
+        return self
+
+    def transform(self, X):
+        from contextlib import nullcontext
+        from warnings import catch_warnings
+
+        es, XTrans = self.estimator, X
+        with (
+            catch_warnings(action="ignore")
+            if self.suppressTransformWarnings
+            else nullcontext
+        ):  # type: ignore
+            if isinstance(self.estimator, sklearn.pipeline.Pipeline):
+                es = self.estimator[-1]
+                if len(self.estimator) > 1:
+                    XTrans = self.estimator[:-1].transform(X)
+            if isinstance(self.callmethod, str):
+                return getattrrec(es, self.callmethod)(XTrans)
+            else:
+                return self.callmethod(es)(XTrans)
 
 
 # %% [markdown]
