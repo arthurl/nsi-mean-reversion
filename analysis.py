@@ -2206,39 +2206,23 @@ del TESTTIME, Xs, ys
 
 # %%
 # %%time
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
+from sklearn.preprocessing import RobustScaler, OneHotEncoder
+from sklearn.svm import LinearSVR
+from sklearn.ensemble import GradientBoostingRegressor
 import sklearn.metrics
 
-featureWeights = {r"shift_\d+": 0.1}
-
 trainIdxs, _ = next(testTimeCV.split())
-X = infData.X.iloc[trainIdxs]
-y = infData.y.iloc[trainIdxs]
+# sorting need for TimeSeriesSplit to work due to bad sklearn implementation
+X = infData.X.iloc[trainIdxs].sort_index(level="time interval", axis=0)
+y = infData.y.iloc[trainIdxs].sort_index(level="time interval", axis=0)
 del trainIdxs
-scalers = defaultdict(StandardScaler)
-XTransformed = regexApplyCols(
-    X.groupby(level="ticker", group_keys=False)
-    .apply(
-        lambda df: mapNumpyOverDataFrame(scalers[df.name].fit_transform, df),
-        include_groups=False,
-    )
-    .reindex(y.index),
-    featureWeights,
-)
 investedCount = sum(y != 0)
 totalCount = len(y)
 balanceInvested = {0: totalCount / 3 / (totalCount - investedCount)}
 balanceInvested[1] = totalCount / 3 / (investedCount / 2)
 balanceInvested[-1] = balanceInvested[1]
 del investedCount, totalCount
-paramSpace = {
-    "C": scipy.stats.loguniform(a=1e-5, b=1e3),
-    "kernel": ["rbf"],
-}
-model = SVC(
-    probability=False, break_ties=True, cache_size=SKLCACHE, random_state=RANDSEED
-)
+
 prices: pd.Series = pd.concat(  # type: ignore
     {tic: fetchTicker(tic)["close"] for tic in set(y.index.get_level_values("ticker"))},
     names=["ticker"],
@@ -2256,8 +2240,61 @@ metrics = [
             relevantProfitCaptured,
         ),
     ),
-    ("Balanced accuracy", "balanced_accuracy"),
+    ("Negative mean squared error", "neg_mean_squared_error"),
+    ("Coefficient of determination", "r2"),
 ]
+del prices
+
+treeParamSpace = {
+    "learning_rate": scipy.stats.loguniform(a=1e-4, b=1),
+    "subsample": scipy.stats.uniform(loc=0.2, scale=0.8),
+    "max_leaf_nodes": [None, 31],
+    "max_depth": scipy.stats.logser(p=0.99),  # [None, 3],
+    "min_samples_leaf": [5, 20],
+    # "l2_regularization": scipy.stats.loguniform(a=1e-4, b=1), #[0, *(10**i for i in range(-3, 0))],
+    "max_features": [1 / np.sqrt(len(infData.X.columns)), 0.3, 1.0],
+}
+treeEstimator = GradientBoostingRegressor(
+    n_iter_no_change=10,
+    tol=1e-7,
+    random_state=RANDSEED,
+)
+treeParamSpace = {"estimator__" + k: v for k, v in treeParamSpace.items()}
+treeModel = sklearn.pipeline.Pipeline([  # fmt: skip
+    ("TickerScaler", GroupedLevelTransformer(RobustScaler(unit_variance=True), level="ticker", keepColNames=True)),  # fmt: skip
+    ("estimator", treeEstimator),
+])  # fmt: skip
+treeClf = sklearn.model_selection.RandomizedSearchCV(
+    treeModel,
+    treeParamSpace,
+    n_iter=20,
+    scoring={
+        name: sklearn.metrics.make_scorer(score_func=f)
+        if isinstance(f, Callable)
+        else f
+        for name, f in metrics
+    },
+    refit="Negative mean squared error",  # type: ignore
+    cv=sklearn.model_selection.TimeSeriesSplit(),
+    n_jobs=-2,
+    verbose=0,
+    error_score="raise",  # type: ignore
+)
+treeClf.fit(X, y, estimator__sample_weight=y.map(balanceInvested))
+del treeParamSpace, treeEstimator, treeModel
+
+estimatorParamSpace = {
+    "epsilon": scipy.stats.loguniform(a=1e-20, b=1),
+    "C": scipy.stats.loguniform(a=1e-5, b=1e3),
+}
+estimator = LinearSVR(max_iter=10**4, random_state=RANDSEED)
+paramSpace = {"estimator__" + k: v for k, v in estimatorParamSpace.items()}
+model = sklearn.pipeline.Pipeline([  # fmt: skip
+    ("TreeTransformer", MethodCallTransformer(estimator=treeClf.best_estimator_, prefit=True, suppressTransformWarnings=True)),  # fmt: skip
+    ("OneHotEncoder", OneHotEncoder(handle_unknown="ignore")),
+    ("estimator", estimator),
+])  # fmt: skip
+del estimatorParamSpace, estimator
 clf = sklearn.model_selection.RandomizedSearchCV(
     model,
     paramSpace,
@@ -2272,72 +2309,18 @@ clf = sklearn.model_selection.RandomizedSearchCV(
     cv=sklearn.model_selection.TimeSeriesSplit(),
     n_jobs=-2,
     verbose=0,
+    error_score="raise",  # type: ignore
 )
-# TODO: implement sample_weight in a way that allows for hyperparameter search
-clf.fit(XTransformed, y, sample_weight=y.map(balanceInvested))
-del balanceInvested, paramSpace, model, prices
-del X, y, XTransformed
+clf.fit(X, y)
+del balanceInvested, paramSpace, model
+del X, y
 
-rankedScore = sorted(
-    enumerate(
-        zip(
-            *(clf.cv_results_[f"mean_test_{metric}"] for metric, _ in metrics),
-            clf.cv_results_[f"rank_test_{metrics[0][0]}"],
-            strict=True,
-        )
-    ),
-    key=lambda x: (x[1][-1], *(-y for y in x[1][:-1]), x[0]),
-)
-fig, ax = plt.subplots(figsize=(14, 4.8))
-thisAx = ax
-axPrev = ax
-axBBoxXMax = 0
-lines = []
-for metNo, (metric, _) in enumerate(metrics):
-    if metNo > 0:
-        if metNo == 1:
-            axBBoxXMax = ax.get_tightbbox().xmax
-        thisAx = ax.twinx()
-        # move spine out of the previous bounding box
-        thisAx.spines.right.set_position(
-            ("outward", axPrev.get_tightbbox().xmax - axBBoxXMax)
-        )
-        thisAx.tick_params(axis="y", colors=f"C{metNo}")
-    lines.extend(
-        thisAx.plot(
-            range(len(rankedScore)),
-            [scores[metNo] for idx, scores in rankedScore],
-            linestyle="--",
-            marker="o",
-            color=f"C{metNo}",
-            label=metric + (" (right)" if metNo >= 1 else ""),
-        )
-    )
-    axPrev = thisAx
-    del metNo, metric, _
-for rank, (idx, scores) in enumerate(rankedScore):
-    toLabel = rank == len(rankedScore) // 2
-    ax.annotate(
-        ("idx=" if toLabel else "") + str(idx),
-        (rank, scores[0]),
-        xytext=(0, 0.7),
-        textcoords="offset fontsize",
-        va="bottom",
-        rotation=90 if toLabel else 0,
-    )
-    ax.annotate(
-        ("rank=" if toLabel else "") + str(scores[-1] - 1),
-        (rank, scores[0]),
-        xytext=(0, -1),
-        textcoords="offset fontsize",
-        va="top",
-        rotation=90 if toLabel else 0,
-    )
-    del rank, idx, scores
-ax.set_xlabel("Rank")
-ax.set_ylabel("Mean score")
-ax.legend(handles=lines)
-del rankedScore, ax, thisAx, axPrev, axBBoxXMax, lines
+# %%
+plotCVMetrics(treeClf, figsize=(14, 4.8))
+display(treeClf.best_params_)
+
+# %%
+plotCVMetrics(clf, figsize=(14, 4.8))
 display(clf.best_params_)
 
 
@@ -2370,14 +2353,7 @@ scores = []
 for phase, idxs in zip(["train", "test"], next(testTimeCV.split()), strict=True):
     X = infData.X.iloc[idxs].loc(axis=0)[ticker, :]
     y = infData.y.iloc[idxs].loc(axis=0)[ticker, :]
-    yPred = mapNumpyOverDataFrame(
-        clf.predict,
-        regexApplyCols(
-            mapNumpyOverDataFrame(scalers[ticker].transform, X),  # type: ignore
-            featureWeights,
-        ),
-        keepColNames=False,
-    ).iloc(axis=1)[0]
+    yPred = mapNumpyDataFrameToSeries(clf.predict, X)
     for metric, scoring in metrics:
         score, _, pvalue = permutationTestScore(y, yPred, scoring=scoring)
         scores.append((phase, metric, score, pvalue))
@@ -2416,26 +2392,26 @@ for ticker in tickers:
     labelMap = {k: v.removeprefix(labelMap[sr.name] + " ") for k, v in labelMap.items()}
     applyLabelMap(labelMap, seriesPlots + [bollinger])
     target = targetTrades.loc(axis=0)[ticker]
-    for phase, idxs in zip(["train", "test"], next(testTimeCV.split())):
-        X = infData.X.iloc[idxs].loc(axis=0)[ticker]
-        yPred = mapNumpyOverDataFrame(
-            clf.predict,
-            regexApplyCols(
-                mapNumpyOverDataFrame(scalers[ticker].transform, X),  # type: ignore
-                featureWeights,
-            ),
-            keepColNames=False,
-        ).iloc(axis=1)[0]
+    for phase, idxs in zip(["train", "test"], next(testTimeCV.split()), strict=True):
+        X = infData.X.iloc[idxs].loc(axis=0)[ticker, :]
+        yPred = mapNumpyDataFrameToSeries(clf.predict, X)
         fig = plotTimeseries(
             seriesPlots,
             [
                 target[target["direction"] > THRESHOLD].index,  # type: ignore
                 target[target["direction"] < -THRESHOLD].index,  # type: ignore
-                coalesceIntervals(yPred[yPred > THRESHOLD].index),
-                coalesceIntervals(yPred[yPred < -THRESHOLD].index),
+                coalesceIntervals(
+                    yPred[yPred > THRESHOLD].index.get_level_values("time interval")
+                ),
+                coalesceIntervals(
+                    yPred[yPred < -THRESHOLD].index.get_level_values("time interval")
+                ),
             ],
             [bollinger],
-            plotInterval=pd.Interval(X.index.left.min(), X.index.right.max()),
+            plotInterval=pd.Interval(
+                X.index.get_level_values("time interval").left.min(),
+                X.index.get_level_values("time interval").right.max(),
+            ),
             figsize=(14, 10.5),  # (8, 4.8),
             title=f"{labelMap[ticker]} ({phase})",
             ylabels=[
