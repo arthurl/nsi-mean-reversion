@@ -384,6 +384,101 @@ def coalesceIntervals(intervals: Iterable[pd.Interval]) -> set[pd.Interval]:
 
 
 # %% [markdown]
+# Helper functions for scikit-learn.
+
+
+# %%
+def plotCVMetrics(
+    cvmodel, /, *, figsize=None, showparams: bool | Iterable[str] = False
+) -> matplotlib.figure.Figure:
+    metrics = [
+        k.removeprefix("mean_test_")
+        for k in cvmodel.cv_results_
+        if k.startswith("mean_test_")
+    ]
+    if isinstance(cvmodel.refit, str):
+        metrics.remove(cvmodel.refit)
+        metrics = [cvmodel.refit] + metrics
+    if showparams is False:
+        cvparams = []
+    else:
+        cvparams = [
+            k.removeprefix("param_")
+            for k in cvmodel.cv_results_
+            if k.startswith("param_")
+        ]
+        if isinstance(showparams, Iterable):
+            allparams = set(cvparams)
+            cvparams = []
+            for param in showparams:
+                assert param in allparams
+                cvparams.append(param)
+            del allparams
+
+    rankedVals = sorted(
+        enumerate(
+            zip(
+                *(cvmodel.cv_results_[f"mean_test_{metric}"] for metric in metrics),
+                *(cvmodel.cv_results_[f"param_{param}"] for param in cvparams),
+                cvmodel.cv_results_[f"rank_test_{metrics[0]}"],
+                strict=True,
+            )
+        ),
+        key=lambda x: (x[1][-1], *(-y for y in x[1][:-1]), x[0]),
+    )
+    fig, ax = plt.subplots(figsize=figsize)
+    thisAx = ax
+    axPrev = ax
+    axBBoxXMax = 0
+    lines = []
+    for idx, label in enumerate([*metrics, *("param: " + p for p in cvparams)]):
+        if idx > 0:
+            if idx == 1:
+                axBBoxXMax = ax.get_tightbbox().xmax
+            thisAx = ax.twinx()
+            # move spine out of the previous bounding box
+            thisAx.spines.right.set_position(
+                ("outward", axPrev.get_tightbbox().xmax - axBBoxXMax)
+            )
+            thisAx.tick_params(axis="y", colors=f"C{idx}")
+        lines.extend(
+            thisAx.plot(
+                range(len(rankedVals)),
+                [vals[idx] for _, vals in rankedVals],
+                linestyle="--",
+                marker="o",
+                color=f"C{idx}",
+                label=label + (" (right)" if idx >= 1 else ""),
+            )
+        )
+        axPrev = thisAx
+        del idx, label
+    for rank, (idx, vals) in enumerate(rankedVals):
+        toLabel = rank == len(rankedVals) // 2
+        ax.annotate(
+            ("idx=" if toLabel else "") + str(idx),
+            (rank, vals[0]),
+            xytext=(0, 0.7),
+            textcoords="offset fontsize",
+            va="bottom",
+            rotation=90 if toLabel else 0,
+        )
+        ax.annotate(
+            ("rank=" if toLabel else "") + str(vals[-1] - 1),
+            (rank, vals[0]),
+            xytext=(0, -1),
+            textcoords="offset fontsize",
+            va="top",
+            rotation=90 if toLabel else 0,
+        )
+        del rank, idx, vals
+    ax.set_xlabel("Rank")
+    ax.set_ylabel("Mean score")
+    ax.legend(handles=lines)
+    return fig
+
+
+# %% [markdown]
 # Helper functions for time series processing.
 
 
