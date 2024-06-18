@@ -40,6 +40,7 @@ import functools
 import sortedcontainers
 import matplotlib
 import matplotlib.dates
+import matplotlib.axes
 import matplotlib.figure
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -214,6 +215,60 @@ def regexApplyCols(
         else:
             data[colMatches] = data[colMatches] * w
     return data
+
+
+# %% [markdown]
+# Helper functions for Pandas.
+
+
+# %%
+def drawMultipleYAxes(
+    plotters: Iterable[Callable], /, *, ax: matplotlib.axes.Axes
+) -> list:
+    thisAx = ax
+    axPrev = ax
+    axBBoxXMax = 0
+    lines = []
+    for idx, plotter in enumerate(plotters):
+        if idx > 0:
+            if idx == 1:
+                axBBoxXMax = ax.get_tightbbox().xmax  # type: ignore
+            thisAx = ax.twinx()
+            # move spine out of the previous bounding box
+            thisAx.spines.right.set_position(
+                ("outward", axPrev.get_tightbbox().xmax - axBBoxXMax)  # type: ignore
+            )
+        lines.extend(plotter(thisAx))
+        axPrev = thisAx
+    return lines
+
+
+def plotDataframeWSeperateYAxes(
+    df: pd.DataFrame, /, *, figsize=None, **plotkwargs
+) -> matplotlib.figure.Figure:
+    def plotter(idx, col):
+        def f(ax):
+            if idx > 0:
+                ax.tick_params(axis="y", colors=f"C{idx}")
+            line = ax.plot(
+                df.index,
+                df[col],
+                color=f"C{idx}",
+                label=col + (" (right)" if idx >= 1 else ""),
+                **plotkwargs,
+            )
+            return line
+
+        return f
+
+    fig, axis = plt.subplots(figsize=figsize)
+    lines = drawMultipleYAxes(
+        (plotter(idx, col) for idx, col in enumerate(df.columns)), ax=axis
+    )
+    axis.legend(handles=lines)
+    if df.index.name:
+        axis.set_xlabel(df.index.name)
+    return fig
 
 
 # %% [markdown]
@@ -442,22 +497,12 @@ def plotCVMetrics(
         key=lambda x: (x[1][-1], *(-y for y in x[1][:-1]), x[0]),
     )
     fig, ax = plt.subplots(figsize=figsize)
-    thisAx = ax
-    axPrev = ax
-    axBBoxXMax = 0
-    lines = []
-    for idx, label in enumerate([*metrics, *("param: " + p for p in cvparams)]):
-        if idx > 0:
-            if idx == 1:
-                axBBoxXMax = ax.get_tightbbox().xmax
-            thisAx = ax.twinx()
-            # move spine out of the previous bounding box
-            thisAx.spines.right.set_position(
-                ("outward", axPrev.get_tightbbox().xmax - axBBoxXMax)
-            )
-            thisAx.tick_params(axis="y", colors=f"C{idx}")
-        lines.extend(
-            thisAx.plot(
+
+    def plotter(idx, label):
+        def f(ax):
+            if idx > 0:
+                ax.tick_params(axis="y", colors=f"C{idx}")
+            return ax.plot(
                 range(len(rankedVals)),
                 [vals[idx] for _, vals in rankedVals],
                 linestyle="--",
@@ -465,9 +510,16 @@ def plotCVMetrics(
                 color=f"C{idx}",
                 label=label + (" (right)" if idx >= 1 else ""),
             )
-        )
-        axPrev = thisAx
-        del idx, label
+
+        return f
+
+    lines = drawMultipleYAxes(
+        (
+            plotter(*ilabel)
+            for ilabel in enumerate([*metrics, *("param: " + p for p in cvparams)])
+        ),
+        ax=ax,
+    )
     for rank, (idx, vals) in enumerate(rankedVals):
         toLabel = rank == len(rankedVals) // 2
         ax.annotate(
@@ -842,6 +894,7 @@ def plotTimeseries(
         ax.set_ylabel(ylabel)
     if title:
         ax.set_title(title)
+    # TODO: use drawMultipleYAxes
     axBBoxXMax = ax.get_tightbbox().xmax
     axPrev = ax
 
