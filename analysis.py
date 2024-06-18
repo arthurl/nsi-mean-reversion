@@ -459,7 +459,13 @@ def coalesceIntervals(intervals: Iterable[pd.Interval]) -> set[pd.Interval]:
 
 # %%
 def plotCVMetrics(
-    cvmodel, /, *, figsize=None, showparams: bool | Iterable[str] = False
+    cvmodel,
+    /,
+    *,
+    figsize=None,
+    showparams: bool | Iterable[str] = False,
+    showindex: bool = True,
+    showrank: bool = True,
 ) -> matplotlib.figure.Figure:
     metrics = [
         k.removeprefix("mean_test_")
@@ -522,22 +528,24 @@ def plotCVMetrics(
     )
     for rank, (idx, vals) in enumerate(rankedVals):
         toLabel = rank == len(rankedVals) // 2
-        ax.annotate(
-            ("idx=" if toLabel else "") + str(idx),
-            (rank, vals[0]),
-            xytext=(0, 0.7),
-            textcoords="offset fontsize",
-            va="bottom",
-            rotation=90 if toLabel else 0,
-        )
-        ax.annotate(
-            ("rank=" if toLabel else "") + str(vals[-1] - 1),
-            (rank, vals[0]),
-            xytext=(0, -1),
-            textcoords="offset fontsize",
-            va="top",
-            rotation=90 if toLabel else 0,
-        )
+        if showindex:
+            ax.annotate(
+                ("idx=" if toLabel else "") + str(idx),
+                (rank, vals[0]),
+                xytext=(0, 0.7),
+                textcoords="offset fontsize",
+                va="bottom",
+                rotation=90 if toLabel else 0,
+            )
+        if showrank:
+            ax.annotate(
+                ("rank=" if toLabel else "") + str(vals[-1] - 1),
+                (rank, vals[0]),
+                xytext=(0, -1),
+                textcoords="offset fontsize",
+                va="top",
+                rotation=90 if toLabel else 0,
+            )
         del rank, idx, vals
     ax.set_xlabel("Rank")
     ax.set_ylabel("Mean score")
