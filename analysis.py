@@ -655,7 +655,8 @@ def timeseriesAsOfTimestamps(ts: pd.Series, dts: pd.DatetimeIndex) -> pd.Series:
         raise ValueError("ts must be a time series")
     tsAsOf = ts.reindex(index=dts)
     naMask = tsAsOf.isna()
-    tsAsOf.loc[naMask] = [ts.asof(t) for t in tsAsOf[naMask].index]
+    if naMask.any():
+        tsAsOf.loc[naMask] = [ts.asof(t) for t in tsAsOf[naMask].index]
     return tsAsOf
 
 
