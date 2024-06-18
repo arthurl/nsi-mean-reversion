@@ -29,6 +29,7 @@ from collections.abc import (
     Iterable,
     Iterator,
     Collection,
+    Sequence,
     Mapping,
     MutableMapping,
 )
@@ -59,6 +60,7 @@ import sklearn.utils
 BASEDIR: Path = Path(r"/home/arthur/Downloads/MScFE/capstone")
 USELATEX = True
 SKLCACHE = 4096  # cache size in MB to use with sklearn
+NJOBS = 6
 RANDSEED = None
 sns.set_context("paper")
 sns.set_palette("deep")
@@ -2222,57 +2224,173 @@ def relevantProfitCaptured(
     return np.mean(performance).astype(float)
 
 
+def buildDataset(
+    tickers: Iterable[str],
+    /,
+    *,
+    tradingDays: pd.DatetimeIndex,
+    testtime=None,
+):
+    testtime = testtime or pd.Timestamp(2023, 1, 1)
+    prettyLabelMap = {}
+    Xs, ys = {}, {}
+    targetTrades = {}
+    for ticker in tickers:
+        data = fetchTicker(ticker)
+        X = constructEquityFeatures(
+            data,
+            tradingDays=tradingDays,
+            dataLabel="",
+            prettyLabelMap=prettyLabelMap,
+        ).dropna()
+        Xs[ticker] = X
+        targets, _ = findMACDOptimumReturnIntervals(data["close"])
+        targetTrades[ticker] = targets
+
+        def getDirection(t) -> int:
+            for interval, direction in targets["direction"].items():
+                if t in interval:
+                    return direction
+            return 0
+
+        ys[ticker] = pd.Series(
+            data=X.index.map(getDirection),
+            index=X.index,
+        ).rename("direction")
+        del getDirection, targets, X
+        del _
+    Xs = pd.concat(Xs, names=["ticker"]).sort_index()
+    ys = pd.concat(ys, names=["ticker"]).sort_index().rename("target direction")  # type: ignore
+    targetTrades = pd.concat(targetTrades, names=["ticker"]).sort_index()
+    testTimeCV = sklearn.model_selection.PredefinedSplit(
+        np.where(ys.index.get_level_values("time interval").left >= testtime, 1, -1)
+    )
+    infData = InferenceData(Xs, ys)
+    return infData, prettyLabelMap, testTimeCV, targetTrades
+
+
+# %% [markdown]
+# Scale features and fit SVM, using GridSearchCV to choose hyparameters.
+
+
+# %%
+def basicRegressionTreeModel(
+    nfeatures: int,
+    /,
+    *,
+    metrics: Sequence[tuple[str, str | Callable]],
+    params: Mapping | NoneType = None,
+    refit: str | int = 0,
+    niter: int = 10,
+    njobs: int = NJOBS,
+    random_state=RANDSEED,
+):
+    from sklearn.preprocessing import RobustScaler
+    from sklearn.ensemble import GradientBoostingRegressor
+
+    baseEstimator = GradientBoostingRegressor(
+        n_iter_no_change=10,
+        tol=1e-7,
+        random_state=random_state,
+    )
+    treeModel = sklearn.pipeline.Pipeline([  # fmt: skip
+        ("TickerScaler", GroupedLevelTransformer(RobustScaler(unit_variance=True), level="ticker", keepColNames=True)),  # fmt: skip
+        ("estimator", baseEstimator),
+    ])  # fmt: skip
+    if params is None:
+        baseParamSpace = {
+            "learning_rate": scipy.stats.loguniform(a=1e-4, b=1),
+            "subsample": scipy.stats.uniform(loc=0.2, scale=0.8),
+            "max_leaf_nodes": [None, 31],
+            "max_depth": scipy.stats.logser(p=0.99),  # [None, 3],
+            "min_samples_leaf": [5, 20],
+            "max_features": [1 / np.sqrt(nfeatures), 0.3, 1.0],
+        }
+        paramSpace = {"estimator__" + k: v for k, v in baseParamSpace.items()}
+        est = sklearn.model_selection.RandomizedSearchCV(
+            treeModel,
+            paramSpace,
+            n_iter=niter,
+            scoring={
+                name: sklearn.metrics.make_scorer(score_func=f)
+                if isinstance(f, Callable)
+                else f
+                for name, f in metrics
+            },
+            refit=metrics[refit][0] if isinstance(refit, int) else refit,  # type: ignore
+            cv=sklearn.model_selection.TimeSeriesSplit(),
+            n_jobs=njobs,
+            verbose=0,
+            random_state=random_state,
+            error_score="raise",  # type: ignore
+        )
+    else:
+        est = treeModel.set_params(**params)
+    return est
+
+
+def treeHDProjectionRegressionModel(
+    treeEstimator,
+    /,
+    *,
+    metrics: Sequence[tuple[str, str | Callable]],
+    params: Mapping | NoneType = None,
+    refit: str | int = 0,
+    niter: int = 10,
+    njobs: int = NJOBS,
+    random_state=RANDSEED,
+):
+    from sklearn.preprocessing import OneHotEncoder
+    from sklearn.svm import LinearSVR
+
+    baseEstimator = LinearSVR(max_iter=10**3, random_state=random_state)
+    model = sklearn.pipeline.Pipeline([  # fmt: skip
+        ("TreeTransformer", MethodCallTransformer(estimator=treeEstimator, prefit=True, suppressTransformWarnings=True)),  # fmt: skip
+        ("OneHotEncoder", OneHotEncoder(handle_unknown="ignore")),
+        ("estimator", baseEstimator),
+    ])  # fmt: skip
+    if params is None:
+        baseParamSpace = {
+            "epsilon": scipy.stats.loguniform(a=1e-20, b=1),
+            "C": scipy.stats.loguniform(a=1e-5, b=1e3),
+        }
+        paramSpace = {"estimator__" + k: v for k, v in baseParamSpace.items()}
+        est = sklearn.model_selection.RandomizedSearchCV(
+            model,
+            paramSpace,
+            n_iter=niter,
+            scoring={
+                name: sklearn.metrics.make_scorer(score_func=f)
+                if isinstance(f, Callable)
+                else f
+                for name, f in metrics
+            },
+            refit=metrics[refit][0] if isinstance(refit, int) else refit,  # type: ignore
+            cv=sklearn.model_selection.TimeSeriesSplit(),
+            n_jobs=njobs,
+            verbose=0,
+            random_state=random_state,
+            error_score="raise",  # type: ignore
+        )
+    else:
+        est = model.set_params(**params)
+    return est
+
+
 # %% [markdown]
 # Construct train/test dataset.
 
 # %%
 # %%time
-TESTTIME = pd.Timestamp(2023, 1, 1)
-tickers = ["SUNPHARMA", "BHARTIARTL", "CANBK", "TITAN"]
-prettyLabelMap = {}
+tickers = ["HDFCBANK", "AXISBANK", "ULTRACEMCO", "INDUSINDBK", "BANKINDIA", "UNIONBANK", "BANKBARODA", "PIIND", "INDIGO", "ICICIBANK"]  # fmt: skip
 tradingDays: pd.DatetimeIndex = resampledData.at_time(datetime.time(10, 0)).index  # type: ignore
-Xs, ys = {}, {}
-targetTrades = {}
-for ticker in tickers:
-    data = fetchTicker(ticker)
-    X = constructEquityFeatures(
-        data, tradingDays=tradingDays, dataLabel="", prettyLabelMap=prettyLabelMap
-    ).dropna()
-    Xs[ticker] = X
-    targets, _ = findMACDOptimumReturnIntervals(data["close"])
-    targetTrades[ticker] = targets
 
-    def getDirection(t) -> int:
-        for interval, direction in targets["direction"].items():
-            if t in interval:
-                return direction
-        return 0
-
-    ys[ticker] = pd.Series(
-        data=X.index.map(getDirection),
-        index=X.index,
-    ).rename("direction")
-    del getDirection, targets, X
-    del _
-Xs = pd.concat(Xs, names=["ticker"]).sort_index()
-ys = pd.concat(ys, names=["ticker"]).sort_index().rename("target direction")  # type: ignore
-targetTrades = pd.concat(targetTrades, names=["ticker"]).sort_index()
-testTimeCV = sklearn.model_selection.PredefinedSplit(
-    np.where(ys.index.get_level_values("time interval").left >= TESTTIME, 1, -1)
+infData, prettyLabelMap, testTimeCV, targetTrades = buildDataset(
+    tickers, tradingDays=tradingDays
 )
-infData = InferenceData(Xs, ys)
-del TESTTIME, Xs, ys
-
-# %% [markdown]
-# Scale features and fit SVM, using GridSearchCV to choose hyparameters.
 
 # %%
 # %%time
-from sklearn.preprocessing import RobustScaler, OneHotEncoder
-from sklearn.svm import LinearSVR
-from sklearn.ensemble import GradientBoostingRegressor
-import sklearn.metrics
-
 trainIdxs, _ = next(testTimeCV.split())
 # sorting need for TimeSeriesSplit to work due to bad sklearn implementation
 X = infData.X.iloc[trainIdxs].sort_index(level="time interval", axis=0)
@@ -2291,7 +2409,7 @@ prices: pd.Series = pd.concat(  # type: ignore
 ).sort_index()
 metrics = [
     (
-        "Relevant profit captured",
+        "Relevant Profit Captured",
         functools.update_wrapper(  # sklearn requires the __name__ attribute
             functools.partial(
                 relevantProfitCaptured,
@@ -2302,88 +2420,74 @@ metrics = [
             relevantProfitCaptured,
         ),
     ),
-    ("Negative mean squared error", "neg_mean_squared_error"),
-    ("Coefficient of determination", "r2"),
+    ("Negative Mean Squared Error", "neg_mean_squared_error"),
+    ("Coefficient of Determination", "r2"),
 ]
 del prices
 
-treeParamSpace = {
-    "learning_rate": scipy.stats.loguniform(a=1e-4, b=1),
-    "subsample": scipy.stats.uniform(loc=0.2, scale=0.8),
-    "max_leaf_nodes": [None, 31],
-    "max_depth": scipy.stats.logser(p=0.99),  # [None, 3],
-    "min_samples_leaf": [5, 20],
-    # "l2_regularization": scipy.stats.loguniform(a=1e-4, b=1), #[0, *(10**i for i in range(-3, 0))],
-    "max_features": [1 / np.sqrt(len(infData.X.columns)), 0.3, 1.0],
-}
-treeEstimator = GradientBoostingRegressor(
-    n_iter_no_change=10,
-    tol=1e-7,
-    random_state=RANDSEED,
+treeEst = basicRegressionTreeModel(
+    len(infData.X.columns),
+    metrics=metrics,
+    niter=50,
+    refit="Negative Mean Squared Error",
 )
-treeParamSpace = {"estimator__" + k: v for k, v in treeParamSpace.items()}
-treeModel = sklearn.pipeline.Pipeline([  # fmt: skip
-    ("TickerScaler", GroupedLevelTransformer(RobustScaler(unit_variance=True), level="ticker", keepColNames=True)),  # fmt: skip
-    ("estimator", treeEstimator),
-])  # fmt: skip
-treeClf = sklearn.model_selection.RandomizedSearchCV(
-    treeModel,
-    treeParamSpace,
-    n_iter=20,
-    scoring={
-        name: sklearn.metrics.make_scorer(score_func=f)
-        if isinstance(f, Callable)
-        else f
-        for name, f in metrics
-    },
-    refit="Negative mean squared error",  # type: ignore
-    cv=sklearn.model_selection.TimeSeriesSplit(),
-    n_jobs=-2,
-    verbose=0,
-    error_score="raise",  # type: ignore
-)
-treeClf.fit(X, y, estimator__sample_weight=y.map(balanceInvested))
-del treeParamSpace, treeEstimator, treeModel
+treeEst.fit(X, y, estimator__sample_weight=y.map(balanceInvested))
 
-estimatorParamSpace = {
-    "epsilon": scipy.stats.loguniform(a=1e-20, b=1),
-    "C": scipy.stats.loguniform(a=1e-5, b=1e3),
-}
-estimator = LinearSVR(max_iter=10**4, random_state=RANDSEED)
-paramSpace = {"estimator__" + k: v for k, v in estimatorParamSpace.items()}
-model = sklearn.pipeline.Pipeline([  # fmt: skip
-    ("TreeTransformer", MethodCallTransformer(estimator=treeClf.best_estimator_, prefit=True, suppressTransformWarnings=True)),  # fmt: skip
-    ("OneHotEncoder", OneHotEncoder(handle_unknown="ignore")),
-    ("estimator", estimator),
-])  # fmt: skip
-del estimatorParamSpace, estimator
-clf = sklearn.model_selection.RandomizedSearchCV(
-    model,
-    paramSpace,
-    n_iter=50,
-    scoring={
-        name: sklearn.metrics.make_scorer(score_func=f)
-        if isinstance(f, Callable)
-        else f
-        for name, f in metrics
-    },
-    refit=metrics[0][0],  # type: ignore
-    cv=sklearn.model_selection.TimeSeriesSplit(),
-    n_jobs=-2,
-    verbose=0,
-    error_score="raise",  # type: ignore
+# %%
+# %%time
+est = treeHDProjectionRegressionModel(
+    treeEst.best_estimator_,  # type: ignore
+    metrics=metrics,
+    niter=25,
+    refit=0,  # type: ignore
 )
-clf.fit(X, y)
-del balanceInvested, paramSpace, model
+est.fit(X, y)
 del X, y
+# del balanceInvested
 
 # %%
-plotCVMetrics(treeClf, figsize=(14, 4.8))
-display(treeClf.best_params_)
+fig = plotCVMetrics(treeEst, figsize=(8, 4.8), showindex=False, showrank=False)
+fig.savefig(
+    BASEDIR / f"M7 - {tickers[0]} tree model - CV metrics.pdf", bbox_inches="tight"
+)
+display(treeEst.best_params_)  # type: ignore
 
 # %%
-plotCVMetrics(clf, figsize=(14, 4.8))
-display(clf.best_params_)
+fig = plotCVMetrics(est, figsize=(8, 4.8), showindex=False, showrank=False)
+fig.savefig(
+    BASEDIR / f"M7 - {tickers[0]} SVM model - CV metrics.pdf", bbox_inches="tight"
+)
+display(est.best_params_)  # type: ignore
+
+# %%
+# %%time
+models = []
+trainIdxs, _ = next(testTimeCV.split())
+for tss in (tickers[:i] for i in range(1, len(tickers) + 1)):
+    X = (
+        infData.X.iloc[trainIdxs]
+        .loc(axis=0)[tss, :]
+        .sort_index(level="time interval", axis=0)
+    )
+    y = (
+        infData.y.iloc[trainIdxs]
+        .loc(axis=0)[tss, :]
+        .sort_index(level="time interval", axis=0)
+    )
+
+    treeEst2 = basicRegressionTreeModel(
+        len(infData.X.columns),
+        metrics=metrics,
+    )
+    treeEst2.fit(X, y, estimator__sample_weight=y.map(balanceInvested))
+    est2 = treeHDProjectionRegressionModel(
+        treeEst2.best_estimator_,
+        metrics=metrics,
+    )
+    est2.fit(X, y)
+    models.append(est2)
+    del tss, X, y, treeEst2, est2
+del trainIdxs
 
 
 # %%
@@ -2411,30 +2515,42 @@ def permutationTestScore(
     return score, permScores, pvalue
 
 
-scores = []
-for phase, idxs in zip(["train", "test"], next(testTimeCV.split()), strict=True):
-    X = infData.X.iloc[idxs].loc(axis=0)[ticker, :]
-    y = infData.y.iloc[idxs].loc(axis=0)[ticker, :]
-    yPred = mapNumpyDataFrameToSeries(clf.predict, X)
-    for metric, scoring in metrics:
-        score, _, pvalue = permutationTestScore(y, yPred, scoring=scoring)
-        scores.append((phase, metric, score, pvalue))
-        del metric, scoring, score, pvalue, _
-    del phase, idxs, X, y, yPred
-display(
-    pd.DataFrame.from_records(
-        data=scores,
-        columns=["phase", "metric", "score", "p-value"],
-        index=["phase", "metric"],
+results = []
+for est in models:
+    scores = []
+    for phase, idxs in zip(["train", "test"], next(testTimeCV.split()), strict=True):
+        X = infData.X.iloc[idxs].loc(axis=0)[tickers[0], :]
+        y = infData.y.iloc[idxs].loc(axis=0)[tickers[0], :]
+        yPred = mapNumpyDataFrameToSeries(est.predict, X)
+        for metric, scoring in metrics:
+            score, _, pvalue = permutationTestScore(y, yPred, scoring=scoring)
+            scores.append((phase, metric, score, pvalue))
+            del metric, scoring, score, pvalue, _
+        del phase, idxs, X, y, yPred
+    results.append(
+        pd.DataFrame.from_records(
+            data=scores,
+            columns=["phase", "metric", "score", "p-value"],
+            index=["phase", "metric"],
+        )
     )
-)
-del scores
+    del est, scores
+results = pd.concat({i + 1: r for i, r in enumerate(results)}, names=["ticker count"])
+display(results.unstack(level="metric"))
+
+# %%
+df = results["score"].loc(axis=0)[:, "test"].droplevel("phase").unstack(level="metric")
+df.index.name = "Ticker Count"
+fig = plotDataframeWSeperateYAxes(df, figsize=(8, 4.8))
+fig.savefig(BASEDIR / f"M7 - {tickers[0]} cross training perf.pdf", bbox_inches="tight")
+del df, fig
 
 # %% [markdown]
 # Visual display of how well the model is fitting.
 
 # %%
-for ticker in tickers:
+modelN = 6
+for ticker in tickers[:modelN]:
     data = fetchTicker(ticker)
     sr = data["close"]
     sr.name = ticker
@@ -2456,7 +2572,7 @@ for ticker in tickers:
     target = targetTrades.loc(axis=0)[ticker]
     for phase, idxs in zip(["train", "test"], next(testTimeCV.split()), strict=True):
         X = infData.X.iloc[idxs].loc(axis=0)[ticker, :]
-        yPred = mapNumpyDataFrameToSeries(clf.predict, X)
+        yPred = mapNumpyDataFrameToSeries(models[modelN].predict, X)
         fig = plotTimeseries(
             seriesPlots,
             [
@@ -2497,6 +2613,7 @@ for ticker in tickers:
         fig.axes[0].annotate("(target intervals)", (0.1, 0.1), xycoords="axes fraction")
         del phase, idxs, X, yPred
     del sr, srDaily, labelMap, seriesPlots, bollinger, target, _
+del modelN
 
 # %% [markdown]
 # Full confusion matrix.
