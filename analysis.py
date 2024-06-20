@@ -1980,10 +1980,10 @@ fig = plotTimeseries(
     intervalColours=["xkcd:green", "xkcd:pale red"],
 )
 fig.axes[1].axhline(y=0, alpha=0.2, color="xkcd:grey", linestyle="--")
-fig.savefig(
-    BASEDIR / f"M6 - {ticker} {plotInterval.left.year} trades.pdf", bbox_inches="tight"
-)
-del sr, sma, macdCen, optimumTrades
+savePath = BASEDIR / f"M6 - {ticker} {plotInterval.left.year} trades"
+fig.savefig(savePath.with_suffix(".pdf"), bbox_inches="tight")
+fig.savefig(savePath.with_suffix(".png"), bbox_inches="tight")
+del sr, sma, macdCen, optimumTrades, savePath
 
 # %% [markdown]
 # ## Prediction of trade using data from closely correlated stocks to cross train
