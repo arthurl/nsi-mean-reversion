@@ -1073,7 +1073,7 @@ data.to_csv(BASEDIR / r"bitstampUSD.s.csv")
 # %% [markdown]
 # This process is slow, so we cache the results.
 
-# %% tags=["active-py"]
+# %%
 data = pd.read_csv(
     BASEDIR / r"bitstampUSD.s.csv",
     index_col="Date",
@@ -1085,7 +1085,7 @@ display(data)
 # %% [markdown]
 # 30-minute time span plot of BTC price.
 
-# %% tags=["active-py"]
+# %%
 fig, ax = plt.subplots()
 data["Price"][
     (datetime.datetime(2023, 12, 31, 19, 0) < data.index)
@@ -1097,7 +1097,7 @@ ax.set_ylabel(latexEscape("Price / $"))
 # %% [markdown]
 # 1-month time span plot of BTC price.
 
-# %% tags=["active-py"]
+# %%
 fig, ax = plt.subplots()
 data["Price"][
     (datetime.datetime(2023, 12, 1, 0, 0) < data.index)
@@ -1109,7 +1109,7 @@ ax.set_ylabel(latexEscape("Price / $"))
 # %% [markdown]
 # Forward fill price data to get a price each second.
 
-# %% tags=["active-py"]
+# %%
 prices = data["Price"].copy()
 prices.index = (data.index - data.index[0]) // pd.Timedelta("1s")
 prices = prices.reindex(
@@ -1124,7 +1124,7 @@ ax.set_ylabel(latexEscape("Price / $"))
 # %% [markdown]
 # Find variance at different sampling frequencies.
 
-# %% tags=["active-py"]
+# %%
 timescales = np.array([2**intervalpow for intervalpow in range(18)])
 secondsInYear = 3600 * 24 * 365
 annVariances = np.array(
@@ -1138,7 +1138,7 @@ ax.set_xlabel("Time scale / seconds")
 ax.set_ylabel("Annualised Variance")
 fig.savefig(BASEDIR / r"M2 - BTC variance timescales.pdf", bbox_inches="tight")
 
-# %% tags=["active-py"]
+# %%
 fig, ax = plt.subplots()
 ax.set_xscale("log")
 ax.set_yscale("log")
@@ -1146,7 +1146,7 @@ ax.plot(timescales, annVariances, "-o")
 ax.set_xlabel("Time scale / seconds")
 ax.set_ylabel("Annualised Variance")
 
-# %% tags=["active-py"]
+# %%
 import sklearn.linear_model
 
 reg = sklearn.linear_model.LinearRegression().fit(
@@ -1154,7 +1154,7 @@ reg = sklearn.linear_model.LinearRegression().fit(
 )
 print(reg.intercept_, reg.coef_)
 
-# %% tags=["active-py"]
+# %%
 np.array([prices[::ts].std() for ts in timescales])
 
 # %% [markdown]
@@ -1162,7 +1162,7 @@ np.array([prices[::ts].std() for ts in timescales])
 # different lengths of absolute time).
 
 
-# %% tags=["active-py"]
+# %%
 def rollingStdScales(
     xs: Iterable, /, *, window: int = 50
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -1188,7 +1188,7 @@ ax.plot(2 ** np.arange(len(stdAnn)), stdAnn - stdStd, "-")
 ax.set_xlabel("Time scale / seconds")
 ax.set_ylabel("Annualised Standard Deviation")
 
-# %% tags=["active-py"]
+# %%
 fig, ax = plt.subplots()
 ax.set_xscale("log")
 ax.set_yscale("log")
