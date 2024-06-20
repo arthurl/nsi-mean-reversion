@@ -1043,11 +1043,10 @@ def plotIntraday(
         for axesRow in axes:
             for ax in axesRow:
                 ax.xaxis.set_ticklabels([])
-    fig.tight_layout()
     return fig
 
 
-# %% [markdown] jp-MarkdownHeadingCollapsed=true
+# %% [markdown]
 # ## Bitcoin
 
 # %% [markdown]
@@ -1833,7 +1832,7 @@ def findMaxReturnLongShortIntervals(
 
 # %% tags=["active-py"]
 optimumTrades = findMaxReturnLongShortIntervals(
-    data[data.index.minute == 30]["close"],  # type:ignore
+    data[data.index.minute == 30]["close"],  # type: ignore
     maxInterval=pd.Timedelta(days=21),
     queueSize=200,
 )
@@ -1852,6 +1851,7 @@ end = start + pd.Timedelta(days=365)
 df2 = pd.DataFrame()
 for window in ["24h", "10D", "90D"]:
     df2[f"{window} MA"] = data["close"].rolling(window=window, center=True).mean()
+    del window
 df2 = df2[(start <= df2.index) & (df2.index < end)]
 
 fig, ax = plt.subplots(figsize=(14, 10.5))
@@ -1973,6 +1973,7 @@ for window in ["24h", "30D"]:
     sma[f"{latexEscape(window)} {latexTextSC('ma')}"] = sr.rolling(
         window=window, center=True
     ).mean()
+    del window
 optimumTrades, macdCen = findMACDOptimumReturnIntervals(sr)
 
 display(optimumTrades)
@@ -2001,7 +2002,7 @@ fig.savefig(savePath.with_suffix(".png"), bbox_inches="tight")
 del sr, sma, macdCen, optimumTrades, savePath
 
 # %% [markdown]
-# ## Prediction of trade using data from closely correlated stocks to cross train
+# ## Mean-reversion forecast model and cross-training
 
 # %%
 InferenceData = namedtuple("InferenceData", ["X", "y"])
@@ -2040,9 +2041,9 @@ def constructEquityFeatures(
         ewm[f"{srPrefix}EWM(15D)"] / ewm[f"{srPrefix}EWM(5D)"]
     )
     if prettyLabelMap is not None:
-        prettyLabelMap[
-            label
-        ] = f"{prettySrPrefix}{latexTextSC('ewm')}(15D)/{latexTextSC('ewm')}(5D)"  # type: ignore
+        prettyLabelMap[label] = (
+            f"{prettySrPrefix}{latexTextSC('ewm')}(15D)/{latexTextSC('ewm')}(5D)"  # type: ignore
+        )
     del label
     macd = computeMultiple(
         computeMACD,
@@ -2061,9 +2062,9 @@ def constructEquityFeatures(
         rsi[f"{srPrefix}RSI(14D)"] / rsi[f"{srPrefix}RSI(5D)"]
     )
     if prettyLabelMap is not None:
-        prettyLabelMap[
-            label
-        ] = f"{prettySrPrefix}{latexTextSC('rsi')}(14D)/{latexTextSC('rsi')}(5D)"  # type: ignore
+        prettyLabelMap[label] = (
+            f"{prettySrPrefix}{latexTextSC('rsi')}(14D)/{latexTextSC('rsi')}(5D)"  # type: ignore
+        )
     del label
     bollinger, stdDev = computeBollingerBands(srDaily, prettyLabelMap=prettyLabelMap)
     # TODO: add volume and dollar volume features
@@ -2167,13 +2168,13 @@ def relevantProfitCapturedPerTicker(
         targetIntervalsDirection[targetIntervalsDirection > targetThreshold].index,
     ):
         loss = 1 - prices.asof(interval.right) / prices.asof(interval.left)  # type: ignore
-        nonTargetLosses *= 1 - max(0, loss)
+        nonTargetLosses *= 1 - max(0, loss)  # type: ignore
     for interval in intervalDifference(
         predShortIntervals,
         targetIntervalsDirection[targetIntervalsDirection < -targetThreshold].index,
     ):
         loss = prices.asof(interval.right) / prices.asof(interval.left) - 1  # type: ignore
-        nonTargetLosses *= 1 - max(0, loss)
+        nonTargetLosses *= 1 - max(0, loss)  # type: ignore
     return relevantGains * nonTargetLosses - 1, targetIntervalTotalReturn
 
 
