@@ -2551,12 +2551,23 @@ for est in models:
     )
     del est, scores
 results = pd.concat({i + 1: r for i, r in enumerate(results)}, names=["ticker count"])
+results.columns.name = "type"
 display(results.unstack(level="metric"))
 
 # %%
-df = results["score"].loc(axis=0)[:, "test"].droplevel("phase").unstack(level="metric")
-df.index.name = "Ticker Count"
-fig = plotDataframeWSeperateYAxes(df, figsize=(8, 4.8))
+df = (
+    results.loc(axis=0)[:, "test"]
+    .droplevel("phase")
+    .unstack(level="metric")
+    .swaplevel(axis=1)
+    .sort_index(axis=1, ascending=False)
+)
+df.index.name = "Ticker Count, $n$"
+display(df)
+fig = plotDataframeWSeperateYAxes(
+    df.loc(axis=1)[:, "score"].droplevel("type", axis=1), figsize=(6.4, 4.8), marker="o"
+)
+fig.axes[0].set_ylabel("Score")
 fig.savefig(BASEDIR / f"M7 - {tickers[0]} cross training perf.pdf", bbox_inches="tight")
 del df, fig
 
