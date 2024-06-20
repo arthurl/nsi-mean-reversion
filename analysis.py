@@ -1648,6 +1648,21 @@ with open(BASEDIR / "data" / r"equity_universe_resampled_close.csv") as f:
 resampledData.columns = map(latexEscape, resampledData.columns)  # type: ignore
 display(resampledData)
 
+# %%
+sns.clustermap(
+    resampledData.corr(),
+    method="complete",
+    cmap="RdBu",
+    annot=False,
+    annot_kws={"size": 7},
+    vmin=-1,
+    vmax=1,
+    figsize=(14, 10.5),
+)
+
+# %%
+resampledData.corrwith(resampledData["HDFCBANK"]).sort_values(ascending=False).head(10)
+
 # %% [markdown]
 # As an example, let’s look at the ticker “5PAISA”.
 
